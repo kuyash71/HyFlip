@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.png" alt="HyFlip" width="360"></p>
+<p align="center"><img src="assets/banner.png" alt="HyFlip"></p>
 
 <p align="center"><b>Hypixel SkyBlock Flipping Toolkit</b><br>
 Free, local and open source. It reads the market and your profile, and shows the flips that fit <i>you</i>.</p>

@@ -1,0 +1,7 @@
+# Test overrides (classpath:/config/ has priority over classpath:/application.yaml).
+# Collectors never run on a schedule and nothing is downloaded during tests.
+hyflip:
+  collection:
+    enabled: false
+  neu:
+    enabled: false

@@ -1,0 +1,23 @@
+[package]
+name = "hyflip"
+version = "0.1.0"
+description = "HyFlip Hypixel SkyBlock Flipping Toolkit"
+license = "GPL-3.0-or-later"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "hyflip_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+log = "0.4"
+# Already in the tree through Tauri: turns Windows `\\?\C:\...` paths into ones `java -jar` can open.
+dunce = "1"

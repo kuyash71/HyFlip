@@ -1,0 +1,31 @@
+/.idea
+/.venv
+/.vscode
+/build
+/dist
+/docs/tmp
+# User config and local data (never commit API keys)
+config.yaml
+!config.example.yaml
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Server (Maven)
+src/server/target/
+
+# App (Node / Vite)
+node_modules/
+src/app/dist/
+# Item icons extracted from the user's Hypixel resource pack
+item-icons/
+*.tsbuildinfo
+
+# Tauri (Rust)
+src/app/src-tauri/target/
+src/app/src-tauri/gen/schemas/
+
+# OS
+.DS_Store
+Thumbs.db

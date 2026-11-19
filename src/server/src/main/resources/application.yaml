@@ -1,0 +1,41 @@
+# Internal server settings. User-facing settings live in config.yaml (see docs/configuration.md),
+# which is imported below. The desktop app overrides port, data dir and token on launch.
+spring:
+  application:
+    name: hyflip-server
+  config:
+    import: optional:file:${HYFLIP_CONFIG:./config.yaml}
+  main:
+    banner-mode: off
+  datasource:
+    url: jdbc:sqlite:${hyflip.data-dir:./data}/hyflip.db?journal_mode=WAL&foreign_keys=true&busy_timeout=5000
+    hikari:
+      # SQLite allows one writer at a time; a small pool avoids lock contention.
+      maximum-pool-size: 4
+  flyway:
+    locations: classpath:db/migration
+  servlet:
+    multipart:
+      # History files for import can be large; they only come from this machine.
+      max-file-size: 4GB
+      max-request-size: 4GB
+      file-size-threshold: 1MB
+  lifecycle:
+    # The desktop app expects the server gone within ~10 s after it dies (ParentWatch); a collector stuck in a
+    # download must not hold shutdown for the default 30 s. SQLite (WAL) rolls back a cut-off write.
+    timeout-per-shutdown-phase: 5s
+  task:
+    scheduling:
+      pool:
+        size: 6
+
+server:
+  # Never listen on other interfaces: serving Hypixel data to other machines is a proxy,
+  # which the Hypixel API policy forbids.
+  address: 127.0.0.1
+  port: 8787
+  shutdown: graceful
+
+logging:
+  level:
+    com.hyflip: INFO

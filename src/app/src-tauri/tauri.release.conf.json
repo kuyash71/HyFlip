@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "pnpm build && pnpm server:package"
+  },
+  "bundle": {
+    "resources": {
+      "../../server/target/hyflip-server.jar": "server/hyflip-server.jar"
+    }
+  }
+}

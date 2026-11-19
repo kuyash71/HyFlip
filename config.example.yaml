@@ -1,0 +1,81 @@
+# HyFlip user config.
+#
+# Copy this file to config.yaml and fill in your values. config.yaml is git-ignored; never
+# commit API keys. In the installed app the file lives in the app config directory
+# (Linux: ~/.config/com.hyflip.app/, Windows: %APPDATA%\com.hyflip.app\).
+# Every field is documented in docs/configuration.md. The player, trading, forge, npc, bazaar
+# and alerts sections can also be edited in the app (Settings tab); once saved there, the app's
+# copy is used instead of these sections.
+
+hyflip:
+  hypixel:
+    # Personal key from https://developer.hypixel.net/dashboard. Only profile features need it.
+    # Personal keys expire every 3 days; the app warns before that. You can also paste it in the
+    # app (Settings → Profile), which is easier to renew.
+    api-key: ""
+    # When you created the key (ISO-8601). Used for the expiry warning.
+    api-key-issued-at: # 2026-11-17T18:00:00Z
+
+  player:
+    username: ""          # Minecraft username
+    profile: ""           # SkyBlock profile name, e.g. "Apple"; empty = active profile
+    coop-member: ""       # co-op member to read personal data from; empty = you
+    # Manual personal context, used when the profile API is not linked:
+    hotm-level:           # e.g. 7; unset = HOTM requirements are not checked
+    forge-slots:          # e.g. 5; unset = 2
+    collections: {}       # tiers by ID or name, e.g. { MITHRIL_ORE: 9, Gemstone: 7 }
+
+  trading:
+    budget:               # coins; empty = no limit
+    bazaar-tax-rate: 0.0125   # fraction; lower with the Bazaar Flipper community shop upgrade
+    price-source: ORDER       # ORDER (buy order / sell offer) or INSTANT (insta-buy / insta-sell)
+    auction-fees:             # AH BIN fees (to verify in game)
+      small-rate: 0.01        # listing fee below medium-from
+      medium-rate: 0.02
+      large-rate: 0.025
+      medium-from: 10000000
+      large-from: 100000000
+      claim-tax-rate: 0.01    # taken from sales above claim-tax-from
+      claim-tax-from: 1000000
+
+  forge:
+    quick-forge-reduction:    # Quick Forge % from your HOTM tree as a fraction, e.g. 0.2
+    molten-forge: AUTO        # Cole's Molten Forge (25%): AUTO (from the election), ON or OFF
+    next-session-in: 8h       # usual time until you can refill a forge slot
+
+  npc:
+    daily-limit: 640          # items of one kind you can buy from NPC shops per day
+    market-share: 0.05        # share of an item's daily volume you can trade without moving the price
+
+  bazaar:
+    market-share: 0.05        # share of the slower side's daily filled volume your orders can expect
+    thin-book: 5              # fewer orders than this on a side raise a THIN_BOOK alert
+
+  alerts:
+    min-auction-sales: 3      # AH values from fewer clean sales in 7 days raise FEW_SALES
+    wide-spread: 0.5          # a Bazaar order whose instant price is 50% worse raises WIDE_SPREAD
+    manipulation-ratio: 2     # a Bazaar price above 2x its 7-day average raises MANIPULATION
+
+  display:
+    time-zone: ""             # e.g. Europe/Istanbul, for forge end times; empty = this computer's zone
+
+  collection:
+    enabled: true
+    bazaar-interval: 60s          # ~0.5 MB per poll (gzip)
+    auctions-ended-interval: 60s  # keep at or below 60 s or sales are lost
+    auctions-interval: 30m        # full scan, ~55 MB each; only runs if items are tracked
+    resources-interval: 24h
+    retention-interval: 1h
+    tracked-auction-items: []     # extra NEU IDs for lowest BIN, e.g. [HYPERION, GOLDEN_DRAGON;4]
+
+  retention:
+    full-resolution: 7d   # minute-level history kept
+    downsample: true      # keep hourly summaries of older data instead of deleting it
+
+  neu:
+    enabled: true               # download recipes from the NEU repository (~22 MB on change)
+    refresh-interval: 24h
+
+  coflnet:
+    enabled: true         # AH sale history from Coflnet's public API (sends item IDs only)
+    items-per-run: 40     # items fetched every 5 minutes, about one request per 3 s

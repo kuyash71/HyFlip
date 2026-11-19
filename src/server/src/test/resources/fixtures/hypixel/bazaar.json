@@ -1,0 +1,146 @@
+{
+ "success": true,
+ "lastUpdated": 1794935109028,
+ "products": {
+  "INK_SACK:3": {
+   "product_id": "INK_SACK:3",
+   "sell_summary": [
+    {
+     "amount": 128589,
+     "pricePerUnit": 1.0,
+     "orders": 2
+    }
+   ],
+   "buy_summary": [
+    {
+     "amount": 403283,
+     "pricePerUnit": 11.7,
+     "orders": 6
+    }
+   ],
+   "quick_status": {
+    "productId": "INK_SACK:3",
+    "sellPrice": 1.0,
+    "sellVolume": 459720,
+    "sellMovingWeek": 41173361,
+    "sellOrders": 9,
+    "buyPrice": 11.7,
+    "buyVolume": 2198898,
+    "buyMovingWeek": 9438282,
+    "buyOrders": 39
+   }
+  },
+  "ENCHANTMENT_SHARPNESS_6": {
+   "product_id": "ENCHANTMENT_SHARPNESS_6",
+   "sell_summary": [
+    {
+     "amount": 2,
+     "pricePerUnit": 500243.7,
+     "orders": 1
+    }
+   ],
+   "buy_summary": [
+    {
+     "amount": 2,
+     "pricePerUnit": 616487.6,
+     "orders": 1
+    }
+   ],
+   "quick_status": {
+    "productId": "ENCHANTMENT_SHARPNESS_6",
+    "sellPrice": 494084.0507299269,
+    "sellVolume": 7881,
+    "sellMovingWeek": 2526,
+    "sellOrders": 413,
+    "buyPrice": 616487.8634146341,
+    "buyVolume": 1743,
+    "buyMovingWeek": 4686,
+    "buyOrders": 308
+   }
+  },
+  "SHARD_CRETAN_BULL": {
+   "product_id": "SHARD_CRETAN_BULL",
+   "sell_summary": [
+    {
+     "amount": 68,
+     "pricePerUnit": 33191.8,
+     "orders": 1
+    }
+   ],
+   "buy_summary": [
+    {
+     "amount": 31,
+     "pricePerUnit": 69995.2,
+     "orders": 1
+    }
+   ],
+   "quick_status": {
+    "productId": "SHARD_CRETAN_BULL",
+    "sellPrice": 32383.05035971223,
+    "sellVolume": 12085,
+    "sellMovingWeek": 3916,
+    "sellOrders": 46,
+    "buyPrice": 69995.12747126438,
+    "buyVolume": 41549,
+    "buyMovingWeek": 7617,
+    "buyOrders": 189
+   }
+  },
+  "ENCHANTED_DIAMOND": {
+   "product_id": "ENCHANTED_DIAMOND",
+   "sell_summary": [
+    {
+     "amount": 68241,
+     "pricePerUnit": 1259.7,
+     "orders": 1
+    }
+   ],
+   "buy_summary": [
+    {
+     "amount": 127,
+     "pricePerUnit": 1335.3,
+     "orders": 1
+    }
+   ],
+   "quick_status": {
+    "productId": "ENCHANTED_DIAMOND",
+    "sellPrice": 1258.7643873372854,
+    "sellVolume": 4852168,
+    "sellMovingWeek": 24101649,
+    "sellOrders": 128,
+    "buyPrice": 1346.7423963480255,
+    "buyVolume": 6016397,
+    "buyMovingWeek": 4970371,
+    "buyOrders": 970
+   }
+  },
+  "REFINED_MITHRIL": {
+   "product_id": "REFINED_MITHRIL",
+   "sell_summary": [
+    {
+     "amount": 4,
+     "pricePerUnit": 744339.5,
+     "orders": 1
+    }
+   ],
+   "buy_summary": [
+    {
+     "amount": 5,
+     "pricePerUnit": 761326.9,
+     "orders": 1
+    }
+   ],
+   "quick_status": {
+    "productId": "REFINED_MITHRIL",
+    "sellPrice": 744339.2455752213,
+    "sellVolume": 10454,
+    "sellMovingWeek": 91597,
+    "sellOrders": 254,
+    "buyPrice": 761327.4954022989,
+    "buyVolume": 4185,
+    "buyMovingWeek": 127309,
+    "buyOrders": 227
+   }
+  }
+ }
+}

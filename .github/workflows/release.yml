@@ -186,9 +186,15 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+      # Artifacts keep their bundle folders (appimage/, deb/, msi/, nsis/): flatten them so every file is
+      # checksummed and attached at the top level.
       - name: Checksums
         working-directory: assets
-        run: sha256sum * > SHA256SUMS.txt
+        run: |
+          find . -mindepth 2 -type f -exec mv -t . {} +
+          find . -mindepth 1 -type d -empty -delete
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}

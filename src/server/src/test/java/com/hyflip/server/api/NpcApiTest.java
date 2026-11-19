@@ -72,12 +72,13 @@ class NpcApiTest extends DatabaseTest {
                 .andExpect(jsonPath("$.settings.sort").value("profitPerDay"))
                 .andExpect(jsonPath(shop + ".name").value(hasItem("PET_ITEM_ALL_SKILLS_BOOST_COMMON · from Zog")))
                 .andExpect(jsonPath(shop + ".netProfit").value(hasItem(closeTo(shopNet, 0.01))))
-                // 5% of 7,000 a day = 350, below the 640 shop limit.
-                .andExpect(jsonPath(shop + ".runsPerDay").value(hasItem(closeTo(350, 1e-6))))
-                .andExpect(jsonPath(shop + ".profitPerDay").value(hasItem(closeTo(shopNet * 350, 0.1))))
+                // Sell offers fill as others insta-buy: 3,500 a day; 5% of that = 175, below the 640 shop limit.
+                .andExpect(jsonPath(shop + ".runsPerDay").value(hasItem(closeTo(175, 1e-6))))
+                .andExpect(jsonPath(shop + ".profitPerDay").value(hasItem(closeTo(shopNet * 175, 0.1))))
                 .andExpect(jsonPath(sell + ".netProfit").value(hasItem(closeTo(2, 1e-9))))
                 .andExpect(jsonPath(sell + ".sellVenue").value(hasItem("NPC")))
-                .andExpect(jsonPath(sell + ".runsPerDay").value(hasItem(closeTo(7_000, 1e-6))))
+                // Buy orders fill as others insta-sell: only that side counts, half of both sides together.
+                .andExpect(jsonPath(sell + ".runsPerDay").value(hasItem(closeTo(3_500, 1e-6))))
                 .andExpect(jsonPath(sell + ".profitPerHour").value(hasItem((Object) null)))
                 .andExpect(jsonPath(sell + ".alerts[*].type").value(hasItem("RECENT_CHANGE")))
                 .andExpect(jsonPath(shop + ".alerts[*]").isEmpty())
@@ -94,7 +95,7 @@ class NpcApiTest extends DatabaseTest {
         mvc.perform(get("/api/v1/flips/npc/shop:ZOG_NPC:PET_ITEM_ALL_SKILLS_BOOST_COMMON"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.guide.steps[0]").value("Buy PET_ITEM_ALL_SKILLS_BOOST_COMMON from Zog (Hub) for 50k coins"))
-                .andExpect(jsonPath("$.guide.steps[2]").value(startsWith("Repeat about 350 times a day")));
+                .andExpect(jsonPath("$.guide.steps[2]").value(startsWith("Repeat about 175 times a day")));
         mvc.perform(get("/api/v1/flips/npc/sell:ENCHANTED_MITHRIL"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.guide.steps[0]").value(startsWith("Place a buy order for ")))

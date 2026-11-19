@@ -1,7 +1,6 @@
 package com.hyflip.server.flipper.forge;
 
 import com.hyflip.server.engine.CostSheet;
-import com.hyflip.server.engine.CraftPlanner;
 import com.hyflip.server.engine.ForgeSpeed;
 import com.hyflip.server.engine.Metrics;
 import com.hyflip.server.flipper.Coins;
@@ -68,8 +67,10 @@ public class ForgeFlipper implements Flipper {
         FlipContext ctx = context(query, player);
         ForgeSpeed speed = calibration.speed(player);
         List<Opportunity> all = new ArrayList<>();
+        java.util.Map<Integer, FlipContext> made = new java.util.HashMap<>();
         for (NeuRecipe r : ctx.book().recipes(NeuRecipe.Type.FORGE)) {
-            all.add(summary(r, ctx, speed));
+            FlipContext at = fitting(r, ctx, speed, query, d -> made.computeIfAbsent(d, k -> context(query, player, k)));
+            all.add(summary(r, at, speed));
         }
         Double budget = query.budget() != null ? query.budget() : player.budget();
         return FlipSupport.page(all, query, budget, ctx.now(), new FlipList.Settings(player.priceSource(),
@@ -82,14 +83,36 @@ public class ForgeFlipper implements Flipper {
         PlayerContext player = query.apply(contexts.current());
         FlipContext ctx = context(query, player);
         ForgeSpeed speed = calibration.speed(player);
-        return ctx.book().recipes(NeuRecipe.Type.FORGE, id).stream().findFirst().map(r -> evaluate(r, ctx, speed));
+        return ctx.book().recipes(NeuRecipe.Type.FORGE, id).stream().findFirst()
+                .map(r -> evaluate(r, fitting(r, ctx, speed, query, d -> context(query, player, d)), speed));
     }
 
     private FlipContext context(FlipQuery query, PlayerContext player) {
+        return context(query, player, query.craftDepth());
+    }
+
+    private FlipContext context(FlipQuery query, PlayerContext player, int depth) {
         Duration next = query.nextSessionIn() != null ? query.nextSessionIn() : player.nextSessionIn();
         return new FlipContext(books.current(), markets.view(query.at()), player, contexts.collections(), next,
-                query.time(clock.millis()),
-                CraftPlanner.DEFAULT_DEPTH).withHistory(markets::at).withRules(contexts.rules());
+                query.time(clock.millis()), depth).withHistory(markets::at).withRules(contexts.rules());
+    }
+
+    /**
+     * The context to plan the recipe in: the full depth, or with bulk crafts hidden and the full plan needing one,
+     * the deepest that fits an inventory (still the full one when none does, so the list hides it).
+     */
+    private static FlipContext fitting(NeuRecipe r, FlipContext ctx, ForgeSpeed speed, FlipQuery query,
+                                       java.util.function.IntFunction<FlipContext> shallower) {
+        if (!query.fitsInventory() || !FlipSupport.bulk(summary(r, ctx, speed))) {
+            return ctx;
+        }
+        for (int depth = query.craftDepth() - 1; depth >= 0; depth--) {
+            FlipContext at = shallower.apply(depth);
+            if (!FlipSupport.bulk(summary(r, at, speed))) {
+                return at;
+            }
+        }
+        return ctx;
     }
 
     /** The list row only; the guide is built for the detail view. */

@@ -167,7 +167,7 @@ erDiagram
 | `bazaar_hourly` | Hourly summaries kept after full-resolution data expires |
 | `auction_sale` | Ended auctions (real sale prices) from Hypixel and Coflnet (`source`); `clean` is 1 for items without value-adding upgrades, 0 with upgrades, NULL for rows stored before V4 (treated as not clean) |
 | `auction_lowest_bin` | Lowest BIN of clean copies of tracked items over time; `listings` counts clean listings |
-| `coflnet_backfill` | When each item's sale history was last fetched from Coflnet, and how many sales came back |
+| `coflnet_backfill` | When each item's sale history was last fetched from Coflnet, how many sales came back and the end time of the oldest (`oldest_at`, V6): a full page (1,000) cuts history off there |
 | `auction_hourly` | Hourly ended-auction summaries (per-unit prices) kept after sales expire |
 | `collector_run` | One row per collector run: health, errors, offline-gap detection |
 | `resource_snapshot` | Latest raw JSON of the election and collections resources |

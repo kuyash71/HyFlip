@@ -70,6 +70,22 @@ public interface Market {
         public double dailyVolume() {
             return (buyMovingWeek + sellMovingWeek) / 7.0;
         }
+
+        /**
+         * Units a day that can fill a sale: sell offers fill as others insta-buy ({@code buyMovingWeek});
+         * insta-selling fills buy orders, which others refill about as fast as they insta-sell.
+         */
+        public double sellsPerDay(PriceSource source) {
+            return (source == PriceSource.ORDER ? buyMovingWeek : sellMovingWeek) / 7.0;
+        }
+
+        /**
+         * Units a day that can fill a purchase: buy orders fill as others insta-sell ({@code sellMovingWeek});
+         * insta-buying takes sell offers, which others refill about as fast as they insta-buy.
+         */
+        public double buysPerDay(PriceSource source) {
+            return (source == PriceSource.ORDER ? sellMovingWeek : buyMovingWeek) / 7.0;
+        }
     }
 
     /**

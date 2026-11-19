@@ -1,7 +1,7 @@
 /** The four flipper screens: a sortable list with column picker, and the detail panel of the chosen flip. */
-import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { FlipExtras, FlipList, FlipType, Opportunity, OpportunityDetail } from "../api/client";
+import { marketRuns, type FlipExtras, type FlipList, type FlipQuery, type FlipType, type Opportunity, type OpportunityDetail } from "../api/client";
 import {
   AlertChip, AlertTile, clockAt, coins, copyText, duration, ErrorLine, exact, ForgeContext, KeptContext, LIQUIDITY_INFO, LiquidityBar, LockedTile,
   parseCoins, parseDuration, pct, ProfileContext, Slot, Stat, typing, useApi, useItem, useItems, usePolling, useRarityColour,
@@ -13,7 +13,8 @@ import { craftedNodes, treeOf } from "./tree";
 
 type ColKey =
   | "cost" | "value" | "fees" | "profit" | "roi" | "seconds" | "perHour" | "perSession" | "perDay" | "runs" | "spread"
-  | "fill" | "cashBack" | "volume" | "trend" | "swing" | "kept" | "needs" | "route" | "sells";
+  | "fill" | "cashBack" | "volume" | "market" | "inVol" | "outVol" | "sellers" | "trend" | "swing" | "kept" | "needs"
+  | "route" | "sells";
 type SortKey = "name" | Exclude<ColKey, "route" | "sells" | "needs">;
 
 /** A row of the list: the opportunity with its display extras and the share of the estimate it tends to keep. */
@@ -81,10 +82,25 @@ const COLUMNS: Column[] = [
     tip: "About when the coins are back in your purse: forge time plus order filling.",
     cell: (r) => (cashBack(r.o) > 0 ? `~${duration(cashBack(r.o))}` : "—") },
   { key: "volume", label: "Volume/day", types: ALL, num: true, sort: (r) => r.o.liquidity.dailyVolume ?? NONE,
-    tip: "Units of the output traded a day (7-day average). Higher sells faster.",
+    tip: "Units of the output that sell a day (7-day average), counting only the side your sale waits on: insta-buys for a sell offer, sales for the Auction House.",
     cell: (r) => {
       const v = r.o.liquidity.dailyVolume;
       return v === null ? <span className="muted">—</span> : v < 1 ? <span className="loss">&lt; 1</span> : coins(v);
+    } },
+  { key: "market", label: "Market runs/day", types: ALL, num: true, sort: (r) => marketRuns(r.o) ?? NONE,
+    tip: "Runs a day the whole market trades: the slower of selling the output and buying the scarcest input. Below 1, one run takes more than a day; your share is a small part of it.",
+    cell: (r) => <RunsCell v={marketRuns(r.o)} /> },
+  { key: "inVol", label: "Input runs/day", types: ALL, num: true, sort: (r) => r.o.volume?.inputRunsPerDay ?? NONE,
+    tip: "Runs' worth of the scarcest input that can be bought a day: insta-sells fill buy orders, sales on the Auction House.",
+    cell: (r) => <RunsCell v={r.o.volume?.inputRunsPerDay ?? null} /> },
+  { key: "outVol", label: "Output runs/day", types: ALL, num: true, sort: (r) => r.o.volume?.outputRunsPerDay ?? NONE,
+    tip: "Runs' worth of the output that sell a day: Volume/day ÷ items one run makes.",
+    cell: (r) => <RunsCell v={r.o.volume?.outputRunsPerDay ?? null} /> },
+  { key: "sellers", label: "Sellers", types: ALL, num: true, sort: (r) => -(r.o.volume?.sellers ?? Infinity),
+    tip: "Sell offers (Bazaar) or BIN listings (Auction House) your sale queues behind. Fewer is quicker; — when the sale does not wait.",
+    cell: (r) => {
+      const n = r.o.volume?.sellers;
+      return n === null || n === undefined ? <span className="muted">—</span> : <span className={n > 200 ? "warn-text" : ""}>{n.toLocaleString("en-US")}</span>;
     } },
   { key: "trend", label: "7d trend", types: ALL, num: true, sort: (r) => r.x?.trend ?? NONE,
     tip: "Output price now against its 7-day level. A big jump can fall back.",
@@ -112,11 +128,48 @@ const COLUMNS: Column[] = [
 
 export const colTip = (k: ColKey) => COLUMNS.find((c) => c.key === k)!.tip;
 
+/** Runs a day, red below one run a day. */
+function RunsCell({ v }: { v: number | null }) {
+  if (v === null) return <span className="muted">—</span>;
+  if (v < 1) return <span className="loss" data-tip={`About one run every ${duration(Math.round(86_400 / Math.max(v, 1e-6)))}`}>{v < 0.1 ? "< 0.1" : v.toFixed(1)}</span>;
+  return <>{v < 10 ? v.toFixed(1) : coins(v)}</>;
+}
+
+/** How the output is sold: a filter that also sets how Bazaar prices are taken for the list. */
+type SaleMode = "any" | "order" | "insta" | "ah" | "npc";
+const SALE_MODES: { v: SaleMode; label: string; tip: string; types: FlipType[] }[] = [
+  { v: "any", label: "Any", tip: "Every flip, priced as set in Settings.", types: ["forge", "craft", "npc"] },
+  { v: "order", label: "BZ order", tip: "Sells on the Bazaar; buy orders for the inputs and a sell offer for the output. Cheaper and pays more, but waits for fills.", types: ["forge", "craft", "npc"] },
+  { v: "insta", label: "Insta", tip: "Sells on the Bazaar; insta-buy the inputs and insta-sell the output. Less profit, nothing to wait for.", types: ["forge", "craft", "npc"] },
+  { v: "ah", label: "AH", tip: "Sells on the Auction House (BIN).", types: ["forge", "craft", "npc"] },
+  { v: "npc", label: "NPC", tip: "Sold to an NPC: no limit on how many it takes.", types: ["npc"] },
+];
+
+function saleQuery(mode: SaleMode): { priceSource?: "ORDER" | "INSTANT"; sellVenue?: "BAZAAR" | "AUCTION" | "NPC" } {
+  switch (mode) {
+    case "order": return { priceSource: "ORDER", sellVenue: "BAZAAR" };
+    case "insta": return { priceSource: "INSTANT", sellVenue: "BAZAAR" };
+    case "ah": return { sellVenue: "AUCTION" };
+    case "npc": return { sellVenue: "NPC" };
+    default: return {};
+  }
+}
+
+/** Volume filters; empty text = off. */
+interface VolumeFilter { minVolume: string; minRuns: string; maxFill: string; maxSellers: string }
+const NO_VOLUME_FILTER: VolumeFilter = { minVolume: "", minRuns: "", maxFill: "", maxSellers: "" };
+/** A plain number ≥ 0 ("2", "0.5"), null when not one. */
+function parseNumber(text: string): number | null {
+  const t = text.trim();
+  if (!/^\d+(\.\d+)?$/.test(t)) return null;
+  return Number(t);
+}
+
 const DEFAULT_HIDDEN: Record<FlipType, ColKey[]> = {
-  forge: ["value", "fees", "perHour", "roi", "fill", "cashBack", "volume", "trend", "swing", "kept", "needs"],
-  craft: ["value", "fees", "cashBack", "volume", "trend", "swing", "kept", "needs"],
-  bazaar: ["value", "fees", "roi", "volume", "trend", "kept", "fill"],
-  npc: ["value", "fees", "roi", "volume", "trend", "swing", "kept"],
+  forge: ["value", "fees", "perHour", "roi", "fill", "cashBack", "inVol", "outVol", "sellers", "trend", "swing", "kept", "needs"],
+  craft: ["value", "fees", "cashBack", "inVol", "outVol", "trend", "swing", "kept", "needs"],
+  bazaar: ["value", "fees", "roi", "market", "trend", "kept", "fill"],
+  npc: ["value", "fees", "roi", "inVol", "outVol", "sellers", "trend", "swing", "kept"],
 };
 const DEFAULT_SORT: Record<FlipType, SortKey> = { forge: "perSession", craft: "profit", bazaar: "perDay", npc: "perDay" };
 /** Rows fetched per list; the list sorts and filters them here. */
@@ -125,12 +178,13 @@ const FETCH_LIMIT = 500;
 const lastSelected: Partial<Record<FlipType, string>> = {};
 
 /** The flip list of one type, refreshed every minute, with extras and track record per row. */
-export function useFlipRows(type: FlipType, opts: { nextSessionIn?: string; includeLocked?: boolean } = {}) {
+export function useFlipRows(type: FlipType, opts: Pick<FlipQuery, "nextSessionIn" | "includeLocked" | "craftSteps" | "hideAlerts"
+  | "priceSource" | "sellVenue" | "minVolume"> = {}) {
   const api = useApi();
   const kept = useContext(KeptContext);
-  const list = usePolling<FlipList>(
-    () => api.flips(type, { limit: FETCH_LIMIT, includeLocked: opts.includeLocked, nextSessionIn: opts.nextSessionIn, includeIncomplete: true }),
-    60_000, [api, type, opts.nextSessionIn, opts.includeLocked]);
+  const query: FlipQuery = { limit: FETCH_LIMIT, includeIncomplete: true, ...opts };
+  const key = `flips:${type}:${JSON.stringify(query)}`;
+  const list = usePolling<FlipList>(() => api.flips(type, query), 60_000, [api, type, key], key);
   const rows = useMemo<Row[]>(
     () => (list.data?.items ?? []).map((o) => ({ o, x: list.data!.extras?.[o.id], kept: kept(o.alerts.map((a) => a.type)) })),
     [list.data, kept]);
@@ -144,9 +198,30 @@ export function FlipperScreen({ type, focus }: { type: FlipType; focus?: string 
   const sessionSeconds = parseDuration(session);
   const sessionBad = session.trim() !== "" && sessionSeconds === null;
   const [locked, setLocked] = useStored(`locked.${type}`, false);
+  // 0 = any depth; 1 = buy every input; 2 = inputs may be crafted once.
+  const [steps, setSteps] = useStored(`craftSteps.${type}`, 0);
+  const craftSteps = type === "craft" && steps > 0 ? steps : undefined;
+  const [bulkToo, setBulkToo] = useStored(`bulkToo.${type}`, false);
+  // With bulk crafts hidden, the server swaps a bulk plan for a shallower one that fits an inventory.
+  const hideBulk = (type === "craft" || type === "forge") && !bulkToo ? "BULK_CRAFT" : undefined;
+  const [saleMode, setSaleMode] = useStored<SaleMode>(`sale.${type}`, "any");
+  const sale = type === "bazaar" ? {} : saleQuery(saleMode);
+  const [volumeFilter, setVolumeFilter] = useStored<VolumeFilter>(`volumeFilter.${type}`, NO_VOLUME_FILTER);
+  const [volOpen, setVolOpen] = useState(false);
+  const minVolume = parseCoins(volumeFilter.minVolume);
+  // Typing a minimum asks the server again; wait until it stops changing.
+  const [minVolumeQuery, setMinVolumeQuery] = useState(minVolume);
+  useEffect(() => {
+    const t = setTimeout(() => setMinVolumeQuery(minVolume), 500);
+    return () => clearTimeout(t);
+  }, [minVolume]);
   const { rows, error, data, reload, loading } = useFlipRows(type, {
     nextSessionIn: type === "forge" && sessionSeconds ? `PT${sessionSeconds}S` : undefined,
     includeLocked: type === "forge" || type === "craft" ? locked : undefined,
+    craftSteps,
+    hideAlerts: hideBulk,
+    minVolume: minVolumeQuery ?? undefined,
+    ...sale,
   });
   const [selected, setSelected] = useState<string | null>(focus ?? lastSelected[type] ?? null);
   const [search, setSearch] = useState("");
@@ -154,7 +229,8 @@ export function FlipperScreen({ type, focus }: { type: FlipType; focus?: string 
   const [hideRisky, setHideRisky] = useStored(`hideAlerts.${type}`, false);
   const [onlyFav, setOnlyFav] = useState(false);
   const [favs, setFavs] = useStored<string[]>("favourites", []);
-  const [hidden, setHidden] = useStored<ColKey[]>(`columns.${type}`, DEFAULT_HIDDEN[type]);
+  // v2: the volume columns came in; older choices would show them all.
+  const [hidden, setHidden] = useStored<ColKey[]>(`columns.v2.${type}`, DEFAULT_HIDDEN[type]);
   const [sort, setSort] = useStored<{ key: SortKey; desc: boolean }>(`sort.${type}`, { key: DEFAULT_SORT[type], desc: true });
   const [showDetail, setShowDetail] = useStored("detail.shown", true);
   // null = automatic: 40% of the split, between 340 and 470 px. Dragging the divider sets a fixed width.
@@ -199,20 +275,36 @@ export function FlipperScreen({ type, focus }: { type: FlipType; focus?: string 
 
   const max = parseCoins(budget);
   const budgetBad = budget.trim() !== "" && max === null;
-  const cols = COLUMNS.filter((c) => c.types.includes(type));
-  const shownCols = cols.filter((c) => !hidden.includes(c.key));
+  const cols = useMemo(() => COLUMNS.filter((c) => c.types.includes(type)), [type]);
+  // Stable between renders, so memoised rows are not all redrawn.
+  const shownCols = useMemo(() => cols.filter((c) => !hidden.includes(c.key)), [cols, hidden]);
   const sortCol = COLUMNS.find((c) => c.key === sort.key && c.types.includes(type));
   const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+  const minRuns = parseNumber(volumeFilter.minRuns);
+  const maxFill = parseDuration(volumeFilter.maxFill);
+  const maxSellers = parseNumber(volumeFilter.maxSellers);
+  const volumeBad = {
+    minVolume: volumeFilter.minVolume.trim() !== "" && minVolume === null,
+    minRuns: volumeFilter.minRuns.trim() !== "" && minRuns === null,
+    maxFill: volumeFilter.maxFill.trim() !== "" && maxFill === null,
+    maxSellers: volumeFilter.maxSellers.trim() !== "" && maxSellers === null,
+  };
+  const volumeActive = [minVolume, minRuns, maxFill, maxSellers].filter((v) => v !== null).length;
   const shown = rows
     .filter((r) => words.every((w) => `${r.o.name} ${r.o.outputId}`.toLowerCase().includes(w)))
     .filter((r) => !hideRisky || r.o.alerts.length === 0)
+    .filter((r) => bulkToo || !r.o.alerts.some((a) => a.type === "BULK_CRAFT"))
     .filter((r) => max === null || r.o.cost <= max)
     .filter((r) => !onlyFav || favs.includes(r.o.id))
+    .filter((r) => minRuns === null || (marketRuns(r.o) ?? Infinity) >= minRuns)
+    .filter((r) => maxFill === null || r.o.fillSeconds === null || r.o.fillSeconds <= maxFill)
+    .filter((r) => maxSellers === null || r.o.volume?.sellers == null || r.o.volume.sellers <= maxSellers)
     .sort((a, b) => {
       const d = sort.key === "name" || !sortCol?.sort ? a.o.name.localeCompare(b.o.name) : sortCol.sort(a) - sortCol.sort(b);
       return sort.desc && sortCol ? -d || 0 : d || 0;
     });
   const flip = rows.find((r) => r.o.id === selected) ?? null;
+  const visibleRows = useProgressive(shown.length);
   const toggleFav = (id: string) => setFavs((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]));
   const sortBy = (key: SortKey) => setSort((s) => ({ key, desc: s.key === key ? !s.desc : key !== "name" }));
 
@@ -284,10 +376,66 @@ export function FlipperScreen({ type, focus }: { type: FlipType; focus?: string 
               <input type="checkbox" checked={locked} onChange={(e) => setLocked(e.target.checked)} /> Locked too
             </label>
           )}
+          {(type === "forge" || type === "craft") && (
+            <label className="check" data-tip="Also show flips whose parts do not fit in one inventory: thousands of items to buy and craft, more than one session.">
+              <input type="checkbox" checked={bulkToo} onChange={(e) => setBulkToo(e.target.checked)} /> Bulk crafts too
+            </label>
+          )}
+          {type === "craft" && (
+            <span className="field" data-tip-title="Craft steps"
+              data-tip="Most crafting steps per flip. 1 step: buy every input and craft the item once. 2 steps: an input may also be crafted from cheaper parts first. Any: up to 4 steps, the cheapest way.">
+              Craft steps
+              <span className="seg small-seg">
+                {([[1, "1"], [2, "2"], [0, "Any"]] as const).map(([v, label]) => (
+                  <button key={v} className={steps === v ? "on" : ""} onClick={() => setSteps(v)}>{label}</button>
+                ))}
+              </span>
+            </span>
+          )}
+          {type !== "bazaar" && (
+            <span className="field" data-tip-title="Sell"
+              data-tip="How the output is sold. BZ order and Insta also price the whole flip that way (buy orders and sell offers, or insta-buy and insta-sell), for this list only.">
+              Sell
+              <span className="seg small-seg">
+                {SALE_MODES.filter((m) => m.types.includes(type)).map((m) => (
+                  <button key={m.v} className={saleMode === m.v ? "on" : ""} onClick={() => setSaleMode(m.v)} data-tip={m.tip}>{m.label}</button>
+                ))}
+              </span>
+            </span>
+          )}
           <label className="check" data-tip="Show only the items you starred (F, or click a ☆).">
             <input type="checkbox" checked={onlyFav} onChange={(e) => setOnlyFav(e.target.checked)} /> ★ Only
           </label>
           <span className="filters-right">
+            <span className="popover-anchor">
+              <button className={`ghost ${volumeActive > 0 ? "on" : ""}`} onClick={() => setVolOpen((o) => !o)} aria-expanded={volOpen}
+                data-tip="Filter by how much the market trades: volume, runs a day, fill time and competing sellers.">
+                Volume{volumeActive > 0 ? ` (${volumeActive})` : ""} ▾
+              </button>
+              {volOpen && (
+                <div className="popover vol-popover" onMouseLeave={() => setVolOpen(false)}>
+                  <label className={`field ${volumeBad.minVolume ? "bad" : ""}`} data-tip="Hide outputs that sell fewer units a day. Type 100, 5k or 1m.">
+                    Min volume/day <input size={7} placeholder="any" value={volumeFilter.minVolume}
+                      onChange={(e) => setVolumeFilter((v) => ({ ...v, minVolume: e.target.value }))} />
+                  </label>
+                  <label className={`field ${volumeBad.minRuns ? "bad" : ""}`} data-tip={colTip("market")}>
+                    Min market runs/day <input size={7} placeholder="any" value={volumeFilter.minRuns}
+                      onChange={(e) => setVolumeFilter((v) => ({ ...v, minRuns: e.target.value }))} />
+                  </label>
+                  {type !== "npc" && (
+                    <label className={`field ${volumeBad.maxFill ? "bad" : ""}`} data-tip="Hide flips whose orders take longer to fill than this, for example 30m or 2h. Instant flips always pass.">
+                      Max fill time <input size={7} placeholder="any" value={volumeFilter.maxFill}
+                        onChange={(e) => setVolumeFilter((v) => ({ ...v, maxFill: e.target.value }))} />
+                    </label>
+                  )}
+                  <label className={`field ${volumeBad.maxSellers ? "bad" : ""}`} data-tip={colTip("sellers")}>
+                    Max sellers <input size={7} placeholder="any" value={volumeFilter.maxSellers}
+                      onChange={(e) => setVolumeFilter((v) => ({ ...v, maxSellers: e.target.value }))} />
+                  </label>
+                  <button className="ghost small" onClick={() => setVolumeFilter(NO_VOLUME_FILTER)}>Clear</button>
+                </div>
+              )}
+            </span>
             <span className="popover-anchor">
               <button className="ghost" onClick={() => setColsOpen((o) => !o)} aria-expanded={colsOpen}
                 data-tip="Pick which columns to show. Hover a name for what it means.">Columns ▾</button>
@@ -331,7 +479,7 @@ export function FlipperScreen({ type, focus }: { type: FlipType; focus?: string 
             </tr>
           </thead>
           <tbody>
-            {shown.map((r) => (
+            {shown.slice(0, visibleRows).map((r) => (
               <FlipRow key={r.o.id} r={r} cols={shownCols} selected={selected === r.o.id} fav={favs.includes(r.o.id)}
                 onSelect={setSelected} onOpen={() => setShowDetail(true)} onFav={toggleFav} />
             ))}
@@ -341,12 +489,14 @@ export function FlipperScreen({ type, focus }: { type: FlipType; focus?: string 
           <div className="empty muted">Loading flips…</div>
         ) : shown.length === 0 && data ? (
           <div className="empty">
-            {rows.length === 0 ? (
+            {rows.length === 0 && saleMode === "any" && minVolumeQuery === null ? (
               <>No flips yet. Prices arrive within a minute of the first start; see Status.</>
             ) : (
               <>
                 Nothing matches.{" "}
-                <button className="ghost" onClick={() => { setSearch(""); setBudget(""); setHideRisky(false); setOnlyFav(false); }}>Clear filters</button>
+                <button className="ghost" onClick={() => {
+                  setSearch(""); setBudget(""); setHideRisky(false); setOnlyFav(false); setSaleMode("any"); setVolumeFilter(NO_VOLUME_FILTER);
+                }}>Clear filters</button>
               </>
             )}
           </div>
@@ -368,7 +518,8 @@ export function FlipperScreen({ type, focus }: { type: FlipType; focus?: string 
           <div className="detail-wrap" style={{ width: detailW }}>
             {flip ? (
               <Detail key={flip.o.id} type={type} row={flip} fav={favs.includes(flip.o.id)} onFav={() => toggleFav(flip.o.id)}
-                onHide={() => setShowDetail(false)} nextSessionIn={type === "forge" && sessionSeconds ? `PT${sessionSeconds}S` : undefined} />
+                onHide={() => setShowDetail(false)} nextSessionIn={type === "forge" && sessionSeconds ? `PT${sessionSeconds}S` : undefined}
+                craftSteps={craftSteps} hideAlerts={hideBulk} priceSource={sale.priceSource} />
             ) : (
               <aside className="detail empty">{data ? "Pick a row to see its details." : ""}</aside>
             )}
@@ -379,8 +530,28 @@ export function FlipperScreen({ type, focus }: { type: FlipType; focus?: string 
   );
 }
 
-/** One list row; rendered apart so a selection change does not rebuild every cell's tooltip text. */
-function FlipRow({ r, cols, selected, fav, onSelect, onOpen, onFav }: {
+/** First rows drawn when a list opens; the rest follow over the next frames, so the tab shows at once. */
+const FIRST_ROWS = 40;
+const ROWS_PER_FRAME = 80;
+
+/** How many of `count` rows to draw: FIRST_ROWS at first, growing each animation frame until all are drawn. */
+export function useProgressive(count: number): number {
+  const [shown, setShown] = useState(FIRST_ROWS);
+  useEffect(() => {
+    if (shown >= count) return;
+    const frame = requestAnimationFrame(() => setShown((n) => n + ROWS_PER_FRAME));
+    return () => cancelAnimationFrame(frame);
+  }, [shown, count]);
+  return Math.min(shown, count);
+}
+
+/**
+ * One list row. Memoised on its data: with 500 rows, a selection change or a poll redraws only the rows that
+ * changed. The callbacks are left out of the comparison (they do the same thing on every render).
+ */
+const FlipRow = memo(FlipRowView, (a, b) => a.r === b.r && a.cols === b.cols && a.selected === b.selected && a.fav === b.fav);
+
+function FlipRowView({ r, cols, selected, fav, onSelect, onOpen, onFav }: {
   r: Row; cols: Column[]; selected: boolean; fav: boolean; onSelect: (id: string) => void; onOpen: () => void; onFav: (id: string) => void;
 }) {
   const info = useItem(r.o.outputId, r.o.name);
@@ -421,15 +592,18 @@ function uniqueAlerts(alerts: Opportunity["alerts"]): Opportunity["alerts"] {
   return [...by.values()];
 }
 
-function Detail({ type, row, fav, onFav, onHide, nextSessionIn }: {
-  type: FlipType; row: Row; fav: boolean; onFav: () => void; onHide: () => void; nextSessionIn?: string;
+function Detail({ type, row, fav, onFav, onHide, nextSessionIn, craftSteps, hideAlerts, priceSource }: {
+  type: FlipType; row: Row; fav: boolean; onFav: () => void; onHide: () => void; nextSessionIn?: string; craftSteps?: number;
+  hideAlerts?: string; priceSource?: "ORDER" | "INSTANT";
 }) {
   const api = useApi();
   const toast = useToast();
   const colour = useRarityColour();
   const o = row.o;
   const item = useItem(o.outputId, o.name);
-  const detail = usePolling<OpportunityDetail>(() => api.flip(type, o.id, { nextSessionIn }), 0, [api, type, o.id, nextSessionIn]);
+  const detail = usePolling<OpportunityDetail>(() => api.flip(type, o.id, { nextSessionIn, craftSteps, hideAlerts, priceSource }), 0,
+    [api, type, o.id, nextSessionIn, craftSteps, hideAlerts, priceSource],
+    `flip:${type}:${o.id}:${nextSessionIn ?? ""}:${craftSteps ?? ""}:${hideAlerts ?? ""}:${priceSource ?? ""}`);
   const tree = useMemo(() => (detail.data ? treeOf(type, detail.data) : null), [detail.data, type]);
   const pages = useMemo(() => (tree ? craftedNodes(tree) : []), [tree]);
   // Steps are in the order they are done; open on the last one, the item itself.
@@ -474,7 +648,7 @@ function Detail({ type, row, fav, onFav, onHide, nextSessionIn }: {
       </div>
 
       <div className="stats">
-        <Stat label={type === "bazaar" ? "Profit per unit" : "Profit per run"} value={coins(o.netProfit)} tone={o.netProfit >= 0 ? "gain" : "loss"}
+        <Stat label={type === "bazaar" ? "Profit per unit" : type === "craft" && o.outputCount > 1 ? `Profit per craft (${o.outputCount} items)` : "Profit per run"} value={coins(o.netProfit)} tone={o.netProfit >= 0 ? "gain" : "loss"}
           tip="After Bazaar tax or Auction House fees." />
         {timed && <Stat label="Per session" value={coins(o.profitPerSession)} tone="gain" tip={colTip("perSession")} />}
         {o.profitPerDay !== null && <Stat label="Per day" value={coins(o.profitPerDay)} tone="gain" tip={colTip("perDay")} />}

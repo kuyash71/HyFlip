@@ -67,6 +67,8 @@ export interface AdvisorInput {
    * more items. Counted at full price, not recycled coins, so it limits how many of one item are bought. 1 = no limit.
    */
   maxShare?: number;
+  /** Most different flips in the plan; unset or 0 for no limit. */
+  maxFlips?: number;
 }
 
 /** Whether a spread limit is set. */
@@ -467,26 +469,26 @@ export interface Prepared {
   excluded: Excluded[];
 }
 
+/** Why a candidate is left out of the plan: null if its method is off (not listed), undefined if it stays. */
+function skipReason(c: Candidate, input: AdvisorInput, risk: (typeof RISK)[Risk]): string | null | undefined {
+  if (!input.methods.includes(c.method)) return null;
+  if (c.locked) return `Locked: ${c.locked}`;
+  if (c.alerts.includes("BULK_CRAFT")) return "Bulk craft: the parts do not fit in one inventory";
+  const skipped = c.alerts.filter((a) => risk.exclude.includes(a));
+  if (skipped.length > 0) return `${input.risk.charAt(0).toUpperCase()}${input.risk.slice(1)} risk skips ${skipped.join(", ")}`;
+  if (c.unitProfit <= 0) return "No profit at today's prices";
+  if (c.unitCost > input.budget) return "One unit costs more than the budget";
+  if (spreading(input) && c.unitCost > flipLimit(input)) return "One unit is worth more than the spread allows per item";
+  if (c.method === "forge" && input.freeSlots <= 0) return "No free forge slot";
+  return undefined;
+}
+
 export function prepare(candidates: Candidate[], input: AdvisorInput): Prepared {
   const excluded: Excluded[] = [];
   const models: Model[] = [];
   const risk = RISK[input.risk];
   for (const c of candidates) {
-    const reason = !input.methods.includes(c.method)
-      ? null
-      : c.locked
-        ? `Locked: ${c.locked}`
-        : c.alerts.some((a) => risk.exclude.includes(a))
-          ? `${input.risk.charAt(0).toUpperCase()}${input.risk.slice(1)} risk skips ${c.alerts.filter((a) => risk.exclude.includes(a)).join(", ")}`
-          : c.unitProfit <= 0
-            ? "No profit at today's prices"
-            : c.unitCost > input.budget
-              ? "One unit costs more than the budget"
-              : spreading(input) && c.unitCost > flipLimit(input)
-                ? "One unit is worth more than the spread allows per item"
-                : c.method === "forge" && input.freeSlots <= 0
-                  ? "No free forge slot"
-                  : undefined;
+    const reason = skipReason(c, input, risk);
     if (reason === null) continue;
     if (reason) {
       excluded.push({ candidate: c, reason });
@@ -638,7 +640,30 @@ function improve(start: State, lots: Lot[][], order: Lot[], input: AdvisorInput,
 }
 
 /** Turns a lot state into a plan, topping up partial lots with what is left. */
+/**
+ * The best plan for the inputs. With `maxFlips`, a plan with more flips is narrowed: the solver runs again on the
+ * flips worth most in total and on those worth most per coin, and the better of the two is kept. The flips that
+ * fall out are listed as excluded with the reason.
+ */
 export function solve(candidates: Candidate[], input: AdvisorInput, opts: SolveOptions = {}): Plan {
+  const full = solveAll(candidates, input, opts);
+  const limit = input.maxFlips ?? 0;
+  if (limit <= 0 || full.allocations.length <= limit) return full;
+  const pick = (score: (a: Allocation) => number) => {
+    const ids = new Set([...full.allocations].sort((a, b) => score(b) - score(a)).slice(0, limit).map((a) => a.candidate.id));
+    return solveAll(candidates.filter((c) => ids.has(c.id)), input, opts);
+  };
+  const byTotal = pick((a) => a.utility);
+  const byCoin = pick((a) => a.utility / Math.max(1, a.capital));
+  const best = byCoin.utility > byTotal.utility ? byCoin : byTotal;
+  const kept = new Set(best.allocations.map((a) => a.candidate.id));
+  const dropped = full.allocations
+    .filter((a) => !kept.has(a.candidate.id))
+    .map((a) => ({ candidate: a.candidate, reason: `Over the limit of ${limit} flips` }));
+  return { ...best, excluded: [...dropped, ...full.excluded] };
+}
+
+function solveAll(candidates: Candidate[], input: AdvisorInput, opts: SolveOptions): Plan {
   const prep = prepare(candidates, input);
   const state = solveLots(prep, input, opts);
   const units = prep.models.map((_, i) => {

@@ -113,9 +113,12 @@ Polled by the UI every 10 seconds.
 | `includeLocked` | `true` | Also return recipes the player has not unlocked |
 | `includeIncomplete` | `true` | Also return opportunities with a missing price (hidden by default) |
 | `limit`, `offset` | `50`, `0` | Paging; `limit` 1–500 |
-| `hideAlerts` | `FEW_SALES,WIDE_SPREAD` | Hide rows carrying any of these [alert](alerts.md) types (comma-separated or repeated; unknown names `400`) |
+| `hideAlerts` | `FEW_SALES,WIDE_SPREAD` | Hide rows carrying any of these [alert](alerts.md) types (comma-separated or repeated; unknown names `400`). With `BULK_CRAFT`, a craft or forge flip whose plan needs bulk crafting is first planned again with fewer crafting levels (and, for crafts, its other recipes); it is hidden only when no plan fits an inventory |
 | `search` | `mithril` | Only names containing this text, case-insensitive |
 | `hotm` | `7` | Check HOTM requirements against this level (0–10) instead of the profile, for example to plan ahead |
+| `priceSource` | `INSTANT` | Price Bazaar trades as `ORDER` (buy orders, sell offers) or `INSTANT` (insta-buy, insta-sell) for this request instead of Settings; also on the detail |
+| `sellVenue` | `AUCTION` | Only flips whose output sells there: `BAZAAR`, `AUCTION` or `NPC` |
+| `craftSteps` | `2` | Most crafting steps per flip, the final craft included (1–4): `1` buys every input, `2` lets an input be crafted once more. Unset: up to 4 (the planner's default). Used by craft and forge flips |
 
 ```json
 {
@@ -154,8 +157,9 @@ Polled by the UI every 10 seconds.
 | `settings.priceSource` | Always `ORDER` for `bazaar` (spreads are order to order) |
 | `settings.forgeSpeed` | `null` for craft |
 | `alerts[]` | `{ type, message, itemId }`; types in [Alerts](alerts.md) |
+| `volume` | `{ outputRunsPerDay, inputRunsPerDay, sellers }`: runs' worth of the output that sell a day (side the sale waits on; null if unknown or NPC), runs' worth of the scarcest bought input that can be bought a day (null if nothing is bought on a market), and the sell offers or BIN listings the sale queues behind (null for insta-sell and NPC) |
 
-`GET /api/v1/flips/{type}/{id}` (the output item ID) returns `{ summary, sheet, unlock, guide, names }`: `sheet` lists each input with its quote (`venue`, `unitPrice`, `gross`, `priceAt`, `estimated`; for a crafted input, what buying would cost) and its `plan` (`method` `BUY`/`CRAFT`/`MISSING`, `cost`, `crafts`, `coins`, nested `inputs`), the recipe coins, the output quote and fees; `unlock.checks` lists each requirement; `guide` has `steps` and `logic`; `names` maps item IDs to display names. Unknown types and IDs return `404`; bad parameters `400`.
+`GET /api/v1/flips/{type}/{id}` (the output item ID) returns `{ summary, sheet, unlock, guide, names }`: `sheet` lists each input with its quote (`venue`, `unitPrice`, `gross`, `priceAt`, `estimated`; for a crafted input, what buying would cost) and its `plan` (`method` `BUY`/`CRAFT`/`MISSING`, `cost`, `crafts`, `coins`, nested `inputs`), the recipe coins, the output quote and fees; `unlock.checks` lists each requirement; `guide` has `steps` and `logic`; `names` maps item IDs to display names. It takes `nextSessionIn`, `craftSteps` and `hideAlerts` like the list, so the detail matches the row it was opened from. Unknown types and IDs return `404`; bad parameters `400`.
 
 ### Forge Tracker
 

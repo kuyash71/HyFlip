@@ -4,6 +4,7 @@ import com.hyflip.server.config.HyFlipProperties;
 import com.hyflip.server.engine.Fees;
 import com.hyflip.server.settings.Settings;
 import com.hyflip.server.settings.SettingsService;
+import com.hyflip.server.storage.ForgeJobRepository;
 import com.hyflip.server.storage.ResourceRepository;
 import java.math.BigDecimal;
 import java.util.HashMap;
@@ -31,15 +32,17 @@ public class PlayerContextService {
     private final LinkedProfileStore linked;
     private final ResourceRepository resources;
     private final ObjectMapper json;
+    private final ForgeJobRepository forgeJobs;
     private final AtomicReference<Parsed<CollectionCatalog>> catalog = new AtomicReference<>();
     private final AtomicReference<Parsed<Set<String>>> perks = new AtomicReference<>();
 
     public PlayerContextService(SettingsService settings, LinkedProfileStore linked, ResourceRepository resources,
-                                ObjectMapper json) {
+                                ObjectMapper json, ForgeJobRepository forgeJobs) {
         this.settings = settings;
         this.linked = linked;
         this.resources = resources;
         this.json = json;
+        this.forgeJobs = forgeJobs;
     }
 
     private record Parsed<T>(String body, T value) {
@@ -62,9 +65,11 @@ public class PlayerContextService {
         profile.ifPresent(p -> tiers.putAll(p.collections()));
         Integer hotm = profile.map(LinkedProfile::hotmLevel).orElse(player.hotmLevel());
         Double quickForge = profile.map(LinkedProfile::quickForgeReduction).orElse(forge.quickForgeReduction());
-        // The profile does not say how many slots are unlocked, only which hold a job.
+        // The profile does not say how many slots are unlocked, only which hold a job now. Slots never get locked
+        // again, so the highest slot ever used (kept in the forge history) counts too: collecting the jobs in the
+        // last slots must not shrink the forge.
         int slots = player.forgeSlots() != null ? player.forgeSlots()
-                : Math.max(PlayerContext.DEFAULT_FORGE_SLOTS, profile.map(LinkedProfile::highestForgeSlot).orElse(0));
+                : forgeSlots(profile.map(LinkedProfile::highestForgeSlot).orElse(0), forgeJobs.highestSlot());
         String source = profile.isPresent() ? "PROFILE" : settings.source().name();
 
         boolean molten;
@@ -95,6 +100,14 @@ public class PlayerContextService {
                 forge.nextSessionIn(), trading.priceSource(), fees, source, profile.isPresent(),
                 profile.map(LinkedProfile::slayers).orElse(null));
     }
+
+    /** Slot count when it is not set by hand: the default, raised to the highest slot seen busy now or before. */
+    static int forgeSlots(int busyNow, int usedBefore) {
+        return Math.min(MAX_FORGE_SLOTS, Math.max(PlayerContext.DEFAULT_FORGE_SLOTS, Math.max(busyNow, usedBefore)));
+    }
+
+    /** The most forge slots a player can unlock (same bound as the setting). */
+    static final int MAX_FORGE_SLOTS = 7;
 
     /** The linked profile, if it was read for the configured username and profile name. */
     public Optional<LinkedProfile> linkedProfile() {

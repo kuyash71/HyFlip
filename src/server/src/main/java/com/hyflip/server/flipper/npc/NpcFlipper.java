@@ -123,7 +123,7 @@ public class NpcFlipper implements Flipper {
         CostSheet sheet = ctx.sheet(r);
         Metrics m = Metrics.of(sheet, 0, ctx.nextSessionIn());
         Map<String, String> names = FlipSupport.names(ctx.book(), sheet, r.output());
-        Liquidity liquidity = Liquidity.of(ctx.market(), sheet.output());
+        Liquidity liquidity = Liquidity.of(ctx.market(), sheet.output(), ctx.player().priceSource());
         // The daily cap counts items bought from NPCs; selling to an NPC has no known cap.
         double units = limits.dailyLimit();
         if (sheet.output() != null && sheet.output().venue() != Venue.NPC) {
@@ -150,7 +150,7 @@ public class NpcFlipper implements Flipper {
         Map<String, String> names = new LinkedHashMap<>();
         names.put(itemId, ctx.book().name(itemId));
         // Liquidity is about buying here: the NPC takes any amount.
-        Liquidity liquidity = Liquidity.of(ctx.market(), buy);
+        Liquidity liquidity = Liquidity.buying(ctx.market(), buy, ctx.player().priceSource());
         double runs = liquidity.dailyVolume() == null ? 0 : liquidity.dailyVolume() * limits.marketShare();
         Opportunity o = summary(SELL + itemId, names.get(itemId) + " · to NPC", itemId, 1, sheet, m, liquidity, runs,
                 ctx, names);
@@ -166,7 +166,7 @@ public class NpcFlipper implements Flipper {
                 sheet.output() == null ? null : sheet.output().venue(), FlipSupport.buyVenues(sheet), liquidity,
                 Unlocks.State.MET, sheet.complete(),
                 FlipSupport.alerts(sheet, liquidity, Unlocks.Unlock.NONE, names, ctx),
-                runs, sheet.complete() ? m.netProfit() * runs : null);
+                runs, sheet.complete() ? m.netProfit() * runs : null, null, FlipSupport.volume(sheet, liquidity, ctx));
     }
 
     static Guide shopGuide(NeuRecipe r, CostSheet sheet, Metrics m, double runs, FlipContext ctx,

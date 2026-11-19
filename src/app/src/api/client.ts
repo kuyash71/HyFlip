@@ -48,7 +48,7 @@ export function createClient(connection: ServerConnection, fetchImpl: typeof fet
     catalog: () => request<Catalog>("/items/catalog"),
     collectorRuns: (hours = 24) => request<Record<string, RunPoint[]>>(`/status/runs?hours=${hours}`),
     runCollector: (name: string) => post<void>(`/status/collectors/${encodeURIComponent(name)}/run`),
-    flip: (type: FlipType, id: string, query: Pick<FlipQuery, "nextSessionIn"> = {}) =>
+    flip: (type: FlipType, id: string, query: Pick<FlipQuery, "nextSessionIn" | "craftSteps" | "hideAlerts" | "priceSource"> = {}) =>
       request<OpportunityDetail>(`/flips/${type}/${encodeURIComponent(id)}${queryString(query)}`),
     forgeSlots: () => request<ForgeSlots>("/forge/slots"),
     forgeJobs: (limit = 50) => request<ForgeJob[]>(`/forge/jobs?limit=${limit}`),
@@ -242,6 +242,27 @@ export interface RunPoint {
 }
 
 /** Display extras of one flip. */
+/** How much of one flip the market takes a day, and how many sellers compete. */
+export interface OpportunityVolume {
+  /** Runs' worth of the output that sell a day; null if unknown or unlimited (NPC). */
+  outputRunsPerDay: number | null;
+  /** Runs' worth of the scarcest bought input that can be bought a day; null if nothing is bought on a market. */
+  inputRunsPerDay: number | null;
+  /** Competing sell offers (Bazaar) or BIN listings (Auction House); null when the sale does not queue. */
+  sellers: number | null;
+}
+
+/**
+ * Runs a day the market supports: the slower of buying the inputs and selling the output. Null when the output's
+ * volume is unknown; an NPC takes any amount, so there only the inputs count.
+ */
+export function marketRuns(o: Pick<Opportunity, "volume" | "sellVenue">): number | null {
+  const v = o.volume;
+  if (!v) return null;
+  if (v.outputRunsPerDay === null) return o.sellVenue === "NPC" ? v.inputRunsPerDay : null;
+  return v.inputRunsPerDay === null ? v.outputRunsPerDay : Math.min(v.outputRunsPerDay, v.inputRunsPerDay);
+}
+
 export interface FlipExtras {
   rarity: string | null;
   /** "HOTM 2", "Diamond VIII"; empty if none. */
@@ -368,6 +389,7 @@ export type AlertType =
   | "FEW_SALES"
   | "WIDE_SPREAD"
   | "MANIPULATION"
+  | "BULK_CRAFT"
   | "RECENT_CHANGE"
   | "THIN_BOOK"
   | "LOW_VOLUME"
@@ -391,6 +413,12 @@ export interface FlipQuery {
   search?: string;
   /** Check HOTM requirements against this level instead of the profile. */
   hotm?: number;
+  /** Most crafting steps per flip, the final craft included (1–4); unset for the default depth. */
+  craftSteps?: number;
+  /** Bazaar prices as orders or instant for this request; unset uses Settings. */
+  priceSource?: "ORDER" | "INSTANT";
+  /** Only flips whose output sells there. */
+  sellVenue?: Venue;
 }
 
 export interface Alert {
@@ -438,6 +466,7 @@ export interface Opportunity {
   profitPerDay: number | null;
   /** Orders mode: about how long one run's orders take to fill at current volume; null if nothing waits. */
   fillSeconds: number | null;
+  volume: OpportunityVolume;
 }
 
 export interface FlipList {

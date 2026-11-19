@@ -44,7 +44,8 @@ export function PriceChart({ itemId }: { itemId: string }) {
   const api = useApi();
   const [range, setRange] = useStored<Range>("chart.range", "7d");
   const r = RANGES.find((x) => x.id === range) ?? RANGES[1];
-  const history = usePolling(() => api.itemHistory(itemId, { from: Date.now() - r.ms, bucket: r.bucket }), 0, [api, itemId, r.id]);
+  const history = usePolling(() => api.itemHistory(itemId, { from: Date.now() - r.ms, bucket: r.bucket }), 0, [api, itemId, r.id],
+    `history:${itemId}:${r.id}`);
   const [hover, setHover] = useState<number | null>(null);
   const series = useMemo(() => (history.data ? toSeries(history.data) : []), [history.data]);
 

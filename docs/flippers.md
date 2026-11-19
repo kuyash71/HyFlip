@@ -125,6 +125,10 @@ flowchart LR
 - Recipes gated by a collection tier (`Requires: Diamond IV`) or HOTM level are hidden when locked, like forge recipes.
 - **Intermediates:** each input is bought or crafted from its own ingredients, whichever is cheaper, down to 3 levels (see [Calculation engine](calculation-engine.md#intermediates-buy-or-craft)). The Forge Flipper and Forge Tracker use the same planner, so forge inputs such as Enchanted Mithril are crafted when that is cheaper.
 - Crafting is instant: duration is 0, there is no profit per hour, and ranking is by profit per craft or ROI. The real limit is how much the market absorbs, so the guide states the daily volume.
+- **Several recipes.** An item with more than one recipe is listed once, with the recipe that earns the most per item made: recipes can make different counts a craft (2 or 40), so a big batch does not win on size alone. Money in the row is per craft; the detail names the count ("one craft makes 40") and compares the recipes per item.
+- **Bulk crafts hidden.** With *Bulk crafts too* off, a flip whose cheapest plan needs bulk crafting is planned again with fewer crafting levels, and the best plan that fits an inventory is shown instead; so a flip seen at *2 steps* does not vanish at *Any*.
+- **Craft steps.** The list can be limited to 1 step (buy every input, craft once) or 2 steps (an input may be crafted first); *Any* allows up to 4. Fewer steps means less work and fewer bulk crafts, usually for less profit.
+- **Bulk crafts.** Crafting parts from cheaper ones can multiply the work: an item made from enchanted blocks bought as base items needs 160 × 160 base items per block. When the purchases of one run do not fit in one inventory (2,304 items) the row gets `BULK_CRAFT` and is hidden unless *Bulk crafts too* is on. On 2026-11-19 this was 158 of 386 craft flips (Blood God Sigil: about 1.6 million items and 10,000 crafts, shown before as "2 crafts"). The crafting tree shows *Crafts in all* and *Items to buy* next to the number of recipes.
 - The guide lists purchases summed per item, each intermediate craft with what it saves over buying, the final craft and where to sell. The detail panel shows the ingredient tree.
 
 First live run (2026-11-17): the Bazaar-sold leaders were Hotspot Water Orb (~47M per craft) and Ultimate Bobbin' Time (~30M). Most high-profit rows sold on the AH, often with `LOW_VOLUME`. Thin AH markets were a weak point: one joke listing or one upgraded copy set the value (a 100M Rabbit Helmet that never sold, a 44M 5-star Yeti Sword).
@@ -185,6 +189,23 @@ flowchart LR
 **To verify:** whether 5% of the slower side is a sensible share when scripts compete for the same spread, and whether fills really follow the moving-week volumes.
 
 First live run (2026-11-18): high-value products with steady volume led (Wither Catalyst ~16% per unit, ~115M a day at 5%; Fuming Potato Book; Jungle Key). Many high-ROI rows (Enchanted Honeycomb 250–530%, Glacial Fragment, Kuudra Teeth) carry `RECENT_CHANGE` or `THIN_BOOK`: the book moved during the last minutes or a single order sets the spread. Before the live book was used, `quick_status` averages inflated spreads (Enchanted Wheat showed 186% ROI instead of about 15%).
+
+## Volume and how it sells
+
+Every flipper has volume columns and filters, since a flip that earns 50M once a week is not the same as one that earns 5M every few minutes.
+
+- **Columns.** *Volume/day* (units of the output that sell a day, on the side the sale waits on), *Market runs/day* (the slower of selling the output and buying the scarcest input, in runs; red below one a day), *Input runs/day*, *Output runs/day* and *Sellers* (sell offers or BIN listings ahead of you). The first two show by default; the column choice was reset once when they came in.
+- **Volume filter** (button next to *Columns*): minimum volume a day (asked of the server, so it searches past the first 500 rows), minimum market runs a day, longest fill time and most sellers.
+- **Sell filter** (forge, craft, NPC): *BZ order* lists flips that sell on the Bazaar, priced with buy orders and sell offers; *Insta* the same priced with insta-buy and insta-sell; *AH* those that sell on the Auction House; *NPC* those sold to an NPC. *BZ order* and *Insta* price the list and its detail that way for this tab only; Settings stay as they are.
+- Flip Calc buys a craft's or forge recipe's inputs no faster than its share of the scarcest input's volume.
+
+## Flip Calc
+
+Splits a budget across the four flippers for the time until the coins are needed (`src/app/src/calc/advisor.ts`). It reads the top 150 rows of each list and calculates only when *CALCULATE* is pressed; the result stays while the app runs, also when other tabs are visited, and the button pulses when the inputs have changed since.
+
+- **Craft steps** (1, 2, Any): the depth of the craft flips it reads, as in the Craft Flipper.
+- **Most flips** (a number; empty for no limit): the most different flips in the plan. A plan with more is solved again twice, once on the flips worth most in total and once on those worth most per coin, and the better is kept. The flips that fall out are listed under *Left out* with the reason.
+- Bulk crafts (`BULK_CRAFT`) are always left out; craft and forge flips are read with the plan that fits an inventory. A craft's units are crafts: "craft 9 times (360 items, 40 a craft)".
 
 ## Expected vs realised profit
 

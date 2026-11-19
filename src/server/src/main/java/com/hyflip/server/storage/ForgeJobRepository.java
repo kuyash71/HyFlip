@@ -55,6 +55,11 @@ public class ForgeJobRepository {
     }
 
     /** Jobs not yet collected, by slot. */
+    /** Highest slot any job was ever in, 0 if none: unlocked slots never go away, so this is a lower bound. */
+    public int highestSlot() {
+        return jdbc.sql("SELECT COALESCE(MAX(slot), 0) FROM forge_job").query(Integer.class).single();
+    }
+
     public List<Job> open() {
         return jdbc.sql("SELECT " + COLUMNS + " FROM forge_job WHERE collected_at IS NULL ORDER BY slot, started_at")
                 .query(ForgeJobRepository::map).list();

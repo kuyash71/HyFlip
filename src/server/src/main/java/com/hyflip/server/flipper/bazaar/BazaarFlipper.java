@@ -158,7 +158,8 @@ public class BazaarFlipper implements Flipper {
         }
         Opportunity o = new Opportunity(itemId, FlipType.BAZAAR, names.get(itemId), itemId, 1, sheet.cost(),
                 sheet.value(), sheet.fees(), m.netProfit(), m.roi(), 0, 0, null, m.sessions(), m.profitPerSession(),
-                Venue.BAZAAR, List.of(Venue.BAZAAR), liquidity, Unlocks.State.MET, true, List.copyOf(alerts), runs, m.netProfit() * runs);
+                Venue.BAZAAR, List.of(Venue.BAZAAR), liquidity, Unlocks.State.MET, true, List.copyOf(alerts), runs, m.netProfit() * runs,
+                null, new Opportunity.Volume(q.buyMovingWeek() / 7.0, q.sellMovingWeek() / 7.0, q.buyOrders()));
         return Optional.of(new OpportunityDetail(o, sheet, Unlocks.Unlock.NONE,
                 guide(bid, ask, top != null, sheet, m, filledPerDay, runs, names.get(itemId), ctx, settings), names));
     }

@@ -70,18 +70,32 @@ public class AuctionRepository {
         }));
     }
 
-    /** When each item's sale history was last fetched from Coflnet, by item row ID. */
-    public java.util.Map<Long, Long> backfilledAt() {
-        java.util.Map<Long, Long> out = new java.util.HashMap<>();
-        jdbc.sql("SELECT item_id, fetched_at FROM coflnet_backfill")
-                .query((rs, n) -> out.put(rs.getLong(1), rs.getLong(2)))
+    /**
+     * The last Coflnet fetch of an item.
+     *
+     * @param oldestAt end time of the oldest sale it returned, null if none (or fetched before this was kept)
+     */
+    public record Backfill(long fetchedAt, int sales, Long oldestAt) {
+    }
+
+    /** The last Coflnet fetch of each item, by item row ID. */
+    public java.util.Map<Long, Backfill> backfills() {
+        java.util.Map<Long, Backfill> out = new java.util.HashMap<>();
+        jdbc.sql("SELECT item_id, fetched_at, sales, oldest_at FROM coflnet_backfill")
+                .query((rs, n) -> {
+                    long oldest = rs.getLong(4);
+                    Long oldestAt = rs.wasNull() ? null : oldest;
+                    return out.put(rs.getLong(1), new Backfill(rs.getLong(2), rs.getInt(3), oldestAt));
+                })
                 .list();
         return out;
     }
 
-    public void markBackfilled(long itemId, long at, int sales) {
-        jdbc.sql("INSERT OR REPLACE INTO coflnet_backfill (item_id, fetched_at, sales) VALUES (:id, :at, :sales)")
-                .param("id", itemId).param("at", at).param("sales", sales).update();
+    public void markBackfilled(long itemId, long at, int sales, Long oldestAt) {
+        jdbc.sql("""
+                INSERT OR REPLACE INTO coflnet_backfill (item_id, fetched_at, sales, oldest_at)
+                VALUES (:id, :at, :sales, :oldest)""")
+                .param("id", itemId).param("at", at).param("sales", sales).param("oldest", oldestAt).update();
     }
 
     public long salesCount() {

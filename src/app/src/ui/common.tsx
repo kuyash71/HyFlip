@@ -231,18 +231,37 @@ export function useItem(id: string | undefined, fallbackName?: string): ItemMeta
 }
 
 /** Calls `load` now, again every `intervalMs` (0 = never), and whenever `deps` change. */
-export function usePolling<T>(load: () => Promise<T>, intervalMs: number, deps: unknown[]) {
-  const [data, setData] = useState<T | null>(null);
+/**
+ * Last answers by cache key, kept while the app runs. A screen that is opened again starts from its last data and
+ * refreshes in the background, so switching tabs does not show "Loading…" every time.
+ */
+const answers = new Map<string, unknown>();
+const MAX_ANSWERS = 40;
+
+function remember(key: string, value: unknown) {
+  answers.delete(key);
+  answers.set(key, value);
+  if (answers.size > MAX_ANSWERS) answers.delete(answers.keys().next().value!);
+}
+
+/**
+ * Loads `load()` now and every `intervalMs` (0: once). With a `cacheKey`, the last answer for that key is shown at
+ * once while a fresh one loads.
+ */
+export function usePolling<T>(load: () => Promise<T>, intervalMs: number, deps: unknown[], cacheKey?: string) {
+  const [data, setData] = useState<T | null>(() => (cacheKey ? (answers.get(cacheKey) as T | undefined) ?? null : null));
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
+    if (cacheKey && answers.has(cacheKey)) setData(answers.get(cacheKey) as T);
     const run = async () => {
       setLoading(true);
       try {
         const value = await load();
         if (cancelled) return;
+        if (cacheKey) remember(cacheKey, value);
         setData(value);
         setError(null);
       } catch (e) {
@@ -262,7 +281,7 @@ export function usePolling<T>(load: () => Promise<T>, intervalMs: number, deps: 
       document.removeEventListener("visibilitychange", onShow);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, tick, ...deps]);
+  }, [intervalMs, tick, cacheKey, ...deps]);
   return { data, error, loading, reload: () => setTick((t) => t + 1) };
 }
 
@@ -379,6 +398,7 @@ export const ALERT_LABEL: Record<string, string> = {
   RECENT_CHANGE: "Price moved",
   THIN_BOOK: "Few orders",
   LOW_VOLUME: "Low volume",
+  BULK_CRAFT: "Bulk craft",
   UNLOCK_UNKNOWN: "Unlock?",
   FORGE_FINISHED: "Ready",
 };
@@ -394,6 +414,7 @@ export const ALERT_INFO: Record<string, string> = {
   MANIPULATION: "The price is far above its 7-day average. Someone may be pushing it.",
   THIN_BOOK: "Only a few orders on the book: one player can move the price.",
   LOW_VOLUME: "Little of it trades a day compared with one run.",
+  BULK_CRAFT: "The parts to buy do not fit in one inventory (36 × 64): many rounds of buying and crafting, more than one session.",
   UNLOCK_UNKNOWN: "A requirement cannot be checked from your profile.",
   FORGE_FINISHED: "A forge slot is done.",
 };
@@ -416,6 +437,7 @@ export const TAG_LOOK: Record<string, { colour: string; glyph: string[] }> = {
   FEW_SALES: { colour: "#b78400", glyph: [".......", "..###..", ".#.#.#.", ".#.#.#.", ".#.#.#.", "..###..", "......."] },
   WIDE_SPREAD: { colour: "#7446c4", glyph: [".......", ".#...#.", "##...##", "#######", "##...##", ".#...#.", "......."] },
   THIN_BOOK: { colour: "#2d68d0", glyph: ["#######", "#..#..#", "#..#..#", "#..#..#", "#..#..#", "#######", "...#..."] },
+  BULK_CRAFT: { colour: "#3d4451", glyph: ["##.#.##", "##.#.##", ".......", "##.#.##", "##.#.##", ".......", "##.#.##"] },
   LOW_VOLUME: { colour: "#5f8c16", glyph: [".......", ".......", ".......", "#......", "#.#....", "#.#.#.#", "#######"] },
   UNLOCK_UNKNOWN: { colour: "#1489aa", glyph: ["..###..", ".#...#.", ".#.....", "#######", "###.###", "###.###", "#######"] },
   LOCKED: { colour: "#8a1c1c", glyph: ["..###..", ".#...#.", ".#...#.", "#######", "###.###", "###.###", "#######"] },

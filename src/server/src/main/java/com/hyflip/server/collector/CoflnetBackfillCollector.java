@@ -40,7 +40,7 @@ public class CoflnetBackfillCollector implements Collector {
     private static final Logger log = LoggerFactory.getLogger(CoflnetBackfillCollector.class);
     /** Plain SkyBlock IDs: the same in Coflnet and HyFlip. */
     private static final Pattern PLAIN_ID = Pattern.compile("[A-Z0-9_]+");
-    /** More failed requests than this in one run fail the run. */
+    /** More failed requests than this in a run where nothing was fetched fail the run. */
     static final int MAX_ERRORS = 3;
 
     private final CoflnetApi coflnet;
@@ -97,6 +97,8 @@ public class CoflnetBackfillCollector implements Collector {
         List<Candidate> due = due(now);
         int rows = 0;
         int errors = 0;
+        int fetched = 0;
+        CoflnetException last = null;
         for (int i = 0; i < due.size(); i++) {
             Candidate c = due.get(i);
             if (i > 0) {
@@ -113,34 +115,65 @@ public class CoflnetBackfillCollector implements Collector {
                     }
                     break;
                 }
-                if (++errors > MAX_ERRORS) {
-                    throw e;
+                if (e.status() >= 400 && e.status() < 500) {
+                    // Coflnet rejects this tag: record the attempt, so it waits a day instead of blocking the queue
+                    // (never-fetched items go first). Network and server errors are retried next run.
+                    auctions.markBackfilled(c.itemId(), now, 0, null);
                 }
                 log.debug("Coflnet backfill of {} failed: {}", c.tag(), e.getMessage());
+                last = e;
+                if (++errors > MAX_ERRORS && fetched == 0) {
+                    // Nothing works (offline, Coflnet down): fail the run so the scheduler backs off.
+                    throw e;
+                }
                 continue;
             }
-            rows += auctions.insertSales(sales(sold, c));
-            auctions.markBackfilled(c.itemId(), now, sold.size());
+            fetched++;
+            List<Sale> sales = sales(sold, c);
+            rows += auctions.insertSales(sales);
+            Long oldest = sales.stream().map(Sale::endedAt).min(Long::compare).orElse(null);
+            auctions.markBackfilled(c.itemId(), now, sold.size(), oldest);
+        }
+        if (errors > 0) {
+            log.info("Coflnet backfill: {} items fetched, {} skipped for a day ({})", fetched, errors,
+                    last == null ? "" : last.getMessage());
         }
         return rows;
     }
 
     /** Tracked plain items never fetched or fetched longer ago than the refetch interval, oldest first. */
     private List<Candidate> due(long now) {
-        Map<Long, Long> fetched = auctions.backfilledAt();
+        Map<Long, AuctionRepository.Backfill> fetched = auctions.backfills();
         List<Candidate> due = new ArrayList<>();
         for (String tag : auctionsCollector.trackedItems()) {
             if (!PLAIN_ID.matcher(tag).matches()) {
                 continue;
             }
             long itemId = registry.resolve(ItemSource.AUCTION, tag, tag);
-            long last = fetched.getOrDefault(itemId, 0L);
-            if (now - last > config.refetchAfter().toMillis()) {
-                due.add(new Candidate(tag, itemId, last));
+            AuctionRepository.Backfill last = fetched.get(itemId);
+            long lastAt = last == null ? 0L : last.fetchedAt();
+            if (now - lastAt > refetchAfter(last, config.refetchAfter()).toMillis()) {
+                due.add(new Candidate(tag, itemId, lastAt));
             }
         }
         due.sort(Comparator.comparingLong(Candidate::lastFetched).thenComparing(Candidate::tag));
         return due.subList(0, Math.min(config.itemsPerRun(), due.size()));
+    }
+
+    /** Shortest wait before a busy item is fetched again. */
+    static final Duration MIN_REFETCH = Duration.ofMinutes(30);
+
+    /**
+     * When to fetch an item again: after {@code normal}, or for an item whose last fetch was a full page, before
+     * that page's span has passed (80% of it), so the next page overlaps it and no sales are missed between.
+     */
+    static Duration refetchAfter(AuctionRepository.Backfill last, Duration normal) {
+        if (last == null || last.sales() < CoflnetApi.PAGE_SIZE || last.oldestAt() == null) {
+            return normal;
+        }
+        Duration span = Duration.ofMillis(Math.max(0, last.fetchedAt() - last.oldestAt()));
+        Duration soon = span.multipliedBy(4).dividedBy(5);
+        return soon.compareTo(normal) >= 0 ? normal : soon.compareTo(MIN_REFETCH) < 0 ? MIN_REFETCH : soon;
     }
 
     static List<Sale> sales(List<SoldAuction> sold, Candidate c) {

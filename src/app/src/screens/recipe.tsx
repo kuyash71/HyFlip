@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Venue } from "../api/client";
 import { coins, duration, pct, Slot, Stat, useItems, useRarityColour, VENUE_LABEL, VENUE_SHORT, VenueChip } from "../ui/common";
 import { PixelIcon } from "../ui/pixel";
-import type { Cell, Node } from "./tree";
+import { workOf, type Cell, type Node } from "./tree";
 
 /** What the crafting web shows about the flip as a whole. */
 export interface WebFlip {
@@ -234,6 +234,7 @@ export function CraftWeb({ flip, onClose }: { flip: WebFlip; onClose: () => void
   const crafted = nodes.filter((n) => n.node.method === "CRAFT" || n.node.method === "FORGE");
   const savedTotal = crafted.filter((n) => n.parent !== null).reduce((s, n) => s + Math.max(0, savedOf(n.node)), 0);
   const forgeTime = crafted.reduce((s, n) => s + (n.node.forgeSeconds ?? 0), 0);
+  const work = workOf(root.node);
   const venues = [...new Set(nodes.filter((n) => n.node.method === "BUY" && n.node.venue).map((n) => n.node.venue!))];
   const sellY = root.y + ROW_H;
 
@@ -333,7 +334,9 @@ export function CraftWeb({ flip, onClose }: { flip: WebFlip; onClose: () => void
           <Stat label="Total cost" value={coins(flip.cost)} />
           <Stat label="Profit" value={coins(flip.profit)} tone="gain" />
           <Stat label="Return" value={pct(flip.roi)} tone="gain" />
-          <Stat label="Steps" value={`${nodes.length} (${crafted.length} ${crafted.length === 1 ? "craft" : "crafts"})`} />
+          <Stat label="Steps" value={`${nodes.length} (${crafted.length} ${crafted.length === 1 ? "recipe" : "recipes"})`} />
+          <Stat label="Crafts in all" value={work.crafts.toLocaleString("en-US")} />
+          <Stat label="Items to buy" value={work.bought.toLocaleString("en-US")} />
           {savedTotal > 0 && <Stat label="Saved by crafting parts" value={coins(savedTotal)} tone="gain" />}
           {forgeTime > 0 && <Stat label="Forge time" value={duration(forgeTime)} />}
           <Stat label="Buy from" value={venues.map((v) => VENUE_SHORT[v]).join(" + ")} />

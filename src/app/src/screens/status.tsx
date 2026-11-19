@@ -26,6 +26,8 @@ const HEALTH_INFO: Record<Health, string> = {
 /** Health of a collector from its last run and how long ago it last succeeded. */
 export function health(c: CollectorStatus, now: number): Health {
   if (!c.lastRun) return "IDLE";
+  // A run in progress (SkyCofl takes about 2 min) is working, not late.
+  if (c.lastRun.status === "RUNNING") return "OK";
   if (c.lastRun.status === "FAILED" && c.consecutiveFailures > 0) return "FAILED";
   if (c.lastSuccessAt !== null && c.intervalSeconds > 0 && now - c.lastSuccessAt > Math.max(3 * c.intervalSeconds, 300) * 1000) return "SLOW";
   return "OK";
@@ -49,8 +51,8 @@ export function StatusScreen() {
   const api = useApi();
   const toast = useToast();
   const now = useNow(5_000);
-  const status = usePolling<Status>(() => api.status(), 15_000, [api]);
-  const runs = usePolling(() => api.collectorRuns(24), 60_000, [api]);
+  const status = usePolling<Status>(() => api.status(), 15_000, [api], "status");
+  const runs = usePolling(() => api.collectorRuns(24), 60_000, [api], "status:runs");
   if (status.error) return <div className="page"><ErrorLine text={`Status unavailable: ${status.error}`} onRetry={status.reload} /></div>;
   if (!status.data) return <div className="page muted">Loading…</div>;
   const s = status.data;

@@ -29,6 +29,11 @@ public enum AlertType {
     THIN_BOOK,
     /** Daily volume is low compared with what one run produces. */
     LOW_VOLUME,
+    /**
+     * Buying the inputs takes more items than one inventory holds (36 slots of 64): the flip means
+     * many rounds of buying and crafting, usually far more than one session allows.
+     */
+    BULK_CRAFT,
     /** A requirement cannot be checked because the profile lacks the value. */
     UNLOCK_UNKNOWN,
     /** A forge slot is done. */

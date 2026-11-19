@@ -39,8 +39,9 @@ function Tracker() {
   const { slots, reload } = useContext(ForgeContext);
   const now = useNow();
   const act = useAct();
-  const history = usePolling(() => api.forgeJobs(30), 30_000, [api, slots]);
-  const recipes = usePolling(() => api.flips("forge", { includeLocked: true, includeIncomplete: true, limit: 500, sort: "netProfit" }), 0, [api]);
+  const history = usePolling(() => api.forgeJobs(30), 30_000, [api, slots], "manager:jobs");
+  const recipes = usePolling(() => api.flips("forge", { includeLocked: true, includeIncomplete: true, limit: 500, sort: "netProfit" }), 0, [api],
+    "manager:recipes");
   // Countdowns run on the server's clock: shift local time by the offset seen at the last fetch.
   const [offset, setOffset] = useState(0);
   useEffect(() => {
@@ -55,7 +56,7 @@ function Tracker() {
   return (
     <>
       {!slots.slotCountKnown && (
-        <p className="muted small">Showing {slots.slotCount} slots. Link your profile or set the slot count in Settings → Forge.</p>
+        <p className="muted small">Showing {slots.slotCount} slots: the most seen in use. If you have more, set the count in Settings → Forge.</p>
       )}
       <div className="forge-slots">
         {slots.slots.map(({ slot, job }) => {
@@ -249,7 +250,7 @@ const FIT_TEXT: Record<CalibrationOverview["fit"]["kind"], string> = {
 function Calibration() {
   const api = useApi();
   const { reload: reloadProfile } = useContext(ProfileContext);
-  const overview = usePolling(() => api.calibration(), 0, [api]);
+  const overview = usePolling(() => api.calibration(), 0, [api], "manager:calibration");
   const toast = useToast();
   const act = async (action: () => Promise<unknown>, done: string) => {
     try {

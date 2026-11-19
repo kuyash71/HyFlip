@@ -4,6 +4,8 @@ import com.hyflip.server.alert.AlertType;
 import com.hyflip.server.engine.CostSheet;
 import com.hyflip.server.flipper.FlipExtras;
 import com.hyflip.server.flipper.FlipList;
+import com.hyflip.server.engine.PriceSource;
+import com.hyflip.server.engine.Venue;
 import com.hyflip.server.flipper.FlipQuery;
 import com.hyflip.server.flipper.FlipSort;
 import com.hyflip.server.flipper.FlipType;
@@ -73,15 +75,20 @@ public class FlipController {
                          @RequestParam(defaultValue = "0") int offset,
                          @RequestParam(required = false) List<String> hideAlerts,
                          @RequestParam(required = false) String search,
-                         @RequestParam(required = false) Integer hotm) {
+                         @RequestParam(required = false) Integer hotm,
+                         @RequestParam(required = false) Integer craftSteps,
+                         @RequestParam(required = false) String priceSource,
+                         @RequestParam(required = false) String sellVenue) {
         Flipper flipper = flipper(type);
         String order = sort != null ? sort : flipper.type().defaultSort().param();
         if (hotm != null && (hotm < 0 || hotm > 10)) {
             throw bad("hotm must be between 0 and 10");
         }
+        checkCraftSteps(craftSteps);
         FlipQuery q = query(budget, nextSessionIn, order, minVolume, includeLocked, includeIncomplete, limit, offset);
         FlipList list = flipper.list(new FlipQuery(q.budget(), q.nextSessionIn(), q.sort(), q.minVolume(),
-                q.includeLocked(), q.includeIncomplete(), q.limit(), q.offset(), alertTypes(hideAlerts), search, hotm));
+                q.includeLocked(), q.includeIncomplete(), q.limit(), q.offset(), alertTypes(hideAlerts), search, hotm,
+                null, craftSteps, priceSource(priceSource), venue(sellVenue)));
         return new ListView(list.total(), list.generatedAt(), list.settings(), list.items(),
                 extras.rows(flipper.type(), list.items()));
     }
@@ -109,14 +116,50 @@ public class FlipController {
 
     @GetMapping("/{type}/{id}")
     public DetailView detail(@PathVariable String type, @PathVariable String id,
-                             @RequestParam(required = false) String nextSessionIn) {
-        FlipQuery query = query(null, nextSessionIn, "profitPerSession", null, true, true, 1, 0);
+                             @RequestParam(required = false) String nextSessionIn,
+                             @RequestParam(required = false) Integer craftSteps,
+                             @RequestParam(required = false) List<String> hideAlerts,
+                             @RequestParam(required = false) String priceSource) {
+        checkCraftSteps(craftSteps);
+        FlipQuery query = query(null, nextSessionIn, "profitPerSession", null, true, true, 1, 0)
+                .withCraftSteps(craftSteps).withHideAlerts(alertTypes(hideAlerts))
+                .withPriceSource(priceSource(priceSource));
         Flipper flipper = flipper(type);
         OpportunityDetail d = flipper.detail(id, query)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No " + type + " flip " + id));
         return new DetailView(d.summary(), d.sheet(), d.unlock(), d.guide(), d.names(),
                 extras.recipes(flipper.type(), d), extras.rarities(d.names().keySet()),
                 extras.rows(flipper.type(), List.of(d.summary())).get(d.summary().id()));
+    }
+
+    /** {@code ORDER} or {@code INSTANT} (any case); null when unset. */
+    static PriceSource priceSource(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return PriceSource.valueOf(value.strip().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw bad("priceSource must be ORDER or INSTANT");
+        }
+    }
+
+    /** {@code BAZAAR}, {@code AUCTION} or {@code NPC} (any case); null when unset. */
+    static Venue venue(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Venue.valueOf(value.strip().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw bad("sellVenue must be BAZAAR, AUCTION or NPC");
+        }
+    }
+
+    private static void checkCraftSteps(Integer craftSteps) {
+        if (craftSteps != null && (craftSteps < 1 || craftSteps > FlipQuery.MAX_CRAFT_STEPS)) {
+            throw bad("craftSteps must be between 1 and " + FlipQuery.MAX_CRAFT_STEPS);
+        }
     }
 
     private Flipper flipper(String type) {

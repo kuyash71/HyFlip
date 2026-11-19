@@ -17,7 +17,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 /** Building blocks shared by the recipe flippers: filters, paging, alerts, names and guide steps. */
 public final class FlipSupport {
@@ -42,13 +44,59 @@ public final class FlipSupport {
     /** Builds the summary row of a priced recipe. */
     public static Opportunity opportunity(FlipType type, NeuRecipe r, CostSheet sheet, Metrics m, long baseSeconds,
                                           FlipContext ctx, Map<String, String> names) {
-        Liquidity liquidity = Liquidity.of(ctx.market(), sheet.output());
+        Liquidity liquidity = Liquidity.of(ctx.market(), sheet.output(), ctx.player().priceSource());
         Unlocks.Unlock unlock = ctx.unlock(r.output());
         return new Opportunity(r.output(), type, names.get(r.output()), r.output(), r.outputCount(), sheet.cost(),
                 sheet.value(), sheet.fees(), m.netProfit(), m.roi(), baseSeconds, m.durationSeconds(),
                 m.profitPerHour(), m.sessions(), m.profitPerSession(),
                 sheet.output() == null ? null : sheet.output().venue(), buyVenues(sheet), liquidity, unlock.state(), sheet.complete(),
-                alerts(sheet, liquidity, unlock, names, ctx), null, null, fill(sheet, ctx).seconds());
+                alerts(sheet, liquidity, unlock, names, ctx), null, null, fill(sheet, ctx).seconds(),
+                volume(sheet, liquidity, ctx));
+    }
+
+    /**
+     * Market depth of a priced sheet: runs a day the output sells (its liquidity per run), runs a day the
+     * scarcest bought input can be bought (Bazaar on the side the purchase waits on, Auction House by sales), and
+     * the sellers the sale queues behind.
+     */
+    public static Opportunity.Volume volume(CostSheet sheet, Liquidity liquidity, FlipContext ctx) {
+        Quote out = sheet.output();
+        Double outputRuns = out == null || liquidity.dailyVolume() == null ? null
+                : liquidity.dailyVolume() / Math.max(out.quantity(), 1e-9);
+        PriceSource source = ctx.player().priceSource();
+        Market market = ctx.market();
+        Map<String, Double> bazaar = new LinkedHashMap<>();
+        Map<String, Double> auction = new LinkedHashMap<>();
+        for (CostSheet.Line line : sheet.inputs()) {
+            for (Quote q : line.plan().purchases().values()) {
+                if (q.venue() == Venue.BAZAAR) {
+                    bazaar.merge(q.itemId(), q.quantity(), Double::sum);
+                } else if (q.venue() == Venue.AUCTION) {
+                    auction.merge(q.itemId(), q.quantity(), Double::sum);
+                }
+            }
+        }
+        Double inputRuns = null;
+        for (Map.Entry<String, Double> e : bazaar.entrySet()) {
+            double perDay = market.bazaar(e.getKey()).map(b -> b.buysPerDay(source)).orElse(0.0);
+            inputRuns = min(inputRuns, perDay / Math.max(e.getValue(), 1e-9));
+        }
+        for (Map.Entry<String, Double> e : auction.entrySet()) {
+            double perDay = market.auction(e.getKey()).map(Market.AuctionQuote::salesPerDay).orElse(0.0);
+            inputRuns = min(inputRuns, perDay / Math.max(e.getValue(), 1e-9));
+        }
+        Integer sellers = null;
+        if (out != null && out.venue() == Venue.BAZAAR && source == PriceSource.ORDER) {
+            // quick_status names orders by the side that fills them: buyOrders counts sell offers.
+            sellers = market.bazaar(out.itemId()).map(Market.BazaarQuote::buyOrders).orElse(null);
+        } else if (out != null && out.venue() == Venue.AUCTION) {
+            sellers = market.auction(out.itemId()).map(Market.AuctionQuote::listings).orElse(null);
+        }
+        return new Opportunity.Volume(outputRuns, inputRuns, sellers);
+    }
+
+    private static Double min(Double a, double b) {
+        return a == null ? b : Math.min(a, b);
     }
 
     /**
@@ -148,6 +196,9 @@ public final class FlipSupport {
         if (budget != null && o.cost() > budget) {
             return false;
         }
+        if (query.sellVenue() != null && o.sellVenue() != query.sellVenue()) {
+            return false;
+        }
         Double volume = o.liquidity().dailyVolume();
         return query.minVolume() == null || volume == null || volume >= query.minVolume();
     }
@@ -176,6 +227,33 @@ public final class FlipSupport {
         plan.inputs().forEach(p -> addNames(book, p, names));
     }
 
+    /** Items one player inventory holds: 36 slots of 64. */
+    public static final int INVENTORY_ITEMS = 36 * 64;
+
+    /**
+     * BULK_CRAFT when the bought inputs of one run do not fit in one inventory. The count is over every
+     * purchase in the plan, crafted parts included, since all of it passes through the inventory.
+     */
+    /** Whether the opportunity needs more bought items than one inventory holds. */
+    public static boolean bulk(Opportunity o) {
+        return o.alerts().stream().anyMatch(a -> a.type() == AlertType.BULK_CRAFT);
+    }
+
+    static Optional<Alert> bulkCraft(CostSheet sheet, List<Quote> purchases) {
+        double items = purchases.stream().mapToDouble(Quote::quantity).sum();
+        if (items <= INVENTORY_ITEMS) {
+            return Optional.empty();
+        }
+        double crafts = sheet.inputs().stream().flatMap(l -> l.plan().craftSteps().stream())
+                .mapToDouble(Plan::crafts).sum();
+        long inventories = (long) Math.ceil(items / INVENTORY_ITEMS);
+        String message = "Needs about " + String.format(Locale.ROOT, "%,d", Math.round(items)) + " bought items ("
+                + String.format(Locale.ROOT, "%,d", inventories) + " full inventories)"
+                + (crafts >= 1 ? " and " + String.format(Locale.ROOT, "%,d", Math.round(Math.ceil(crafts))) + " crafts" : "")
+                + " per run";
+        return Optional.of(new Alert(AlertType.BULK_CRAFT, message, null));
+    }
+
     public static List<Alert> alerts(CostSheet sheet, Liquidity liquidity, Unlocks.Unlock unlock,
                                      Map<String, String> names, FlipContext ctx) {
         Market market = ctx.market();
@@ -192,6 +270,7 @@ public final class FlipSupport {
                     a.estimated() || b.estimated())));
         }
         List<Quote> quotes = new ArrayList<>(merged.values());
+        bulkCraft(sheet, quotes).ifPresent(alerts::add);
         double profit = sheet.netProfit();
         for (Quote q : quotes) {
             String name = names.getOrDefault(q.itemId(), q.itemId());
@@ -201,9 +280,10 @@ public final class FlipSupport {
             }
             if (q.venue() == Venue.BAZAAR) {
                 market.bazaar(q.itemId()).ifPresent(b -> {
-                    if (Liquidity.rate(b.dailyVolume(), q.quantity()).level() == Liquidity.Level.LOW) {
+                    double daily = b.buysPerDay(ctx.player().priceSource());
+                    if (Liquidity.rate(daily, q.quantity()).level() == Liquidity.Level.LOW) {
                         alerts.add(new Alert(AlertType.LOW_VOLUME, name + ": only about "
-                                + Math.round(b.dailyVolume()) + " traded per day for " + Coins.amount(q.quantity())
+                                + Math.round(daily) + " a day to buy from for " + Coins.amount(q.quantity())
                                 + " needed", q.itemId()));
                     }
                     // Buy orders fill when others insta-sell (sellMovingWeek).
@@ -386,6 +466,9 @@ public final class FlipSupport {
         }
         for (Plan c : crafts) {
             String step = "Craft " + Coins.amount(c.quantity()) + " × " + names.getOrDefault(c.itemId(), c.itemId());
+            if (Math.abs(c.crafts() - c.quantity()) > 1e-9 && c.crafts() > 0) {
+                step += " in " + Coins.amount(c.crafts()) + (c.crafts() == 1 ? " craft" : " crafts");
+            }
             if (c.savings() != null) {
                 step += " (saves about " + Coins.format(c.savings()) + " over buying)";
             }

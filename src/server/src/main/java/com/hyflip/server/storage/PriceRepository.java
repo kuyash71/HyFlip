@@ -107,6 +107,27 @@ public class PriceRepository {
                 .param("at", at).query(Long.class).optional();
     }
 
+    /**
+     * For items whose last Coflnet fetch was a full page ({@code page} sales or more): the end of their oldest
+     * stored Coflnet sale in {@code [from, to]}, by canonical ID. Before it their history was cut off, so sales per
+     * day count from there, not from the start of the window.
+     */
+    public java.util.Map<String, Long> cutOffSince(long from, long to, int page) {
+        java.util.Map<String, Long> out = new java.util.HashMap<>();
+        jdbc.sql("""
+                SELECT i.canonical_id, min(s.ended_at)
+                FROM coflnet_backfill b
+                JOIN item i ON i.id = b.item_id
+                JOIN auction_sale s ON s.item_id = b.item_id AND s.source = 'COFLNET'
+                WHERE b.sales >= :page AND s.ended_at BETWEEN :from AND :to
+                GROUP BY i.canonical_id
+                """)
+                .param("page", page).param("from", from).param("to", to)
+                .query((rs, n) -> out.put(rs.getString(1), rs.getLong(2)))
+                .list();
+        return out;
+    }
+
     /** Ended auctions of clean copies of the item in {@code [from, to]}. */
     public List<Sale> sales(String canonicalId, long from, long to) {
         return jdbc.sql("""

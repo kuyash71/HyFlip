@@ -96,7 +96,7 @@ Each AH unit is treated as its own listing, since forge outputs sold on the AH r
 | Profit per session | net profit ÷ sessions (default ranking for the forge) |
 | Runs per day | NPC Flipper: daily shop limit and a share of market volume (see [Flippers](flippers.md#npc-flipper)). Bazaar Flipper: units, a share of the slower side's filled volume (see [Flippers](flippers.md#bazaar-flipper)) |
 | Profit per day | net profit × runs per day (default ranking for NPC and Bazaar flips) |
-| Liquidity | daily volume ÷ output quantity: HIGH ≥ 20, MEDIUM ≥ 3, else LOW. Bazaar daily volume = (`buy_moving_week` + `sell_moving_week`) ÷ 7; AH = units sold per day over the stored sale history (up to 7 days) |
+| Liquidity | daily volume ÷ output quantity: HIGH ≥ 20, MEDIUM ≥ 3, else LOW. Bazaar: only the side the trade waits on, ÷ 7: a sell offer fills as others insta-buy (`buy_moving_week`), a buy order as others insta-sell (`sell_moving_week`); with instant prices the other side. Both sides together overstated one-sided items (in a sample of 1,106 products, a third had one side under a quarter of the other). AH = units sold per day over the time the stored sales cover (up to 7 days; for items whose Coflnet page was full, only since the oldest sale of that page) |
 
 Cost uses the cheapest way to obtain each input, buying or crafting it (next section). Crafted inputs are priced at the cost of their own ingredients.
 

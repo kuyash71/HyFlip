@@ -56,7 +56,15 @@ function howTo(c: Candidate, units: number, capital: number, src: Opp | undefine
     case "bazaar":
       return rounds ? `Buy orders for ${n} over your session, ${atOnce} at a time, then sell offers` : `Buy order for ${n}, then sell offers`;
     case "craft":
-      return rounds ? `Craft ${n} over your session, ${atOnce} at a time, sell on the ${sells}` : `Buy the inputs, craft ${n}, sell on the ${sells}`;
+    {
+      // A unit is one craft, which can make several items (40 for some recipes): say both.
+      const perCraft = Math.max(1, src?.outputCount ?? 1);
+      const times = `${n} time${units > 1 ? "s" : ""}`;
+      const items = perCraft > 1 ? ` (${(units * perCraft).toLocaleString("en-US")} items, ${perCraft} a craft)` : "";
+      return rounds
+        ? `Craft ${times} over your session${items}, ${atOnce} at a time, sell on the ${sells}`
+        : `Buy the inputs, craft ${times}${items}, sell on the ${sells}`;
+    }
     case "npc":
       return src?.buyVenues.includes("NPC") ? `Buy ${n} from the NPC, sell on the ${sells}` : `Buy ${n} on the Bazaar, sell to the NPC`;
   }
@@ -64,19 +72,41 @@ function howTo(c: Candidate, units: number, capital: number, src: Opp | undefine
 
 type Opp = FlipList["items"][number];
 
+/** Parses the most-flips field: empty means no limit (0), a whole number of 1 or more a limit, anything else null. */
+export function parseMaxFlips(text: string): number | null {
+  const t = text.trim();
+  if (t === "") return 0;
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n >= 1 ? n : null;
+}
+/** The last plan, kept while the app runs so it is still there after visiting other tabs. */
+let lastResult: { plan: Plan | null; inputs: string } | null = null;
+
 export function CalcScreen({ onOpen }: { onOpen: (t: FlipType, id: string) => void }) {
   const api = useApi();
   const { slots, reload: reloadSlots } = useContext(ForgeContext);
   const { profile } = useContext(ProfileContext);
   const kept = useContext(KeptContext);
   const toast = useToast();
-  const settings = usePolling<Settings>(() => api.settings().then((v) => v.settings), 0, [api]);
+  const settings = usePolling<Settings>(() => api.settings().then((v) => v.settings), 0, [api], "calc:settings");
+  // 0 = any depth; 1 = buy every input; 2 = inputs may be crafted once. Only craft flips use it.
+  const [craftSteps, setCraftSteps] = useStored("calc.craftSteps", 0);
+  const [maxFlipsText, setMaxFlipsText] = useStored("calc.maxFlipsText", "");
+  const parsedMaxFlips = parseMaxFlips(maxFlipsText);
+  const maxFlips = parsedMaxFlips ?? 0;
   const sources = usePolling<Source[]>(
     () => Promise.all(METHODS.map(async (type) => ({
       type,
-      list: await api.flips(type, { limit: PER_METHOD, includeLocked: type === "forge" || type === "craft" }),
+      list: await api.flips(type, {
+        limit: PER_METHOD,
+        includeLocked: type === "forge" || type === "craft",
+        craftSteps: type === "craft" && craftSteps > 0 ? craftSteps : undefined,
+        // Bulk crafts are left out of plans, so ask for the plan of each flip that fits an inventory.
+        hideAlerts: type === "craft" || type === "forge" ? "BULK_CRAFT" : undefined,
+      }),
     }))),
-    120_000, [api]);
+    120_000, [api, craftSteps], `calc:sources:${craftSteps}`);
   const [starting, setStarting] = useState(false);
   const [budgetText, setBudgetText] = useStored("calc.budget", "10m");
   const [hours, setHours] = useStored("calc.hours", 8);
@@ -106,12 +136,16 @@ export function CalcScreen({ onOpen }: { onOpen: (t: FlipType, id: string) => vo
   }, [sources.data, bazaarShare, kept, linkedNow]);
   // The plan is only worked out when the player presses CALCULATE: solving takes up to a second, and a plan that
   // changes under the cursor while inputs are typed is hard to read.
-  const inputs = JSON.stringify([budget, hours, online, [...methods].sort(), risk, maxShare, free.length]);
-  const [result, setResult] = useState<{ plan: Plan | null; inputs: string } | null>(null);
+  const inputs = JSON.stringify([budget, hours, online, [...methods].sort(), risk, maxShare, free.length, craftSteps, maxFlips]);
+  const [result, setStoredResult] = useState<{ plan: Plan | null; inputs: string } | null>(() => lastResult);
+  const setResult = (r: { plan: Plan | null; inputs: string }) => {
+    lastResult = r;
+    setStoredResult(r);
+  };
   const [calculating, setCalculating] = useState(false);
   const plan = result?.plan ?? null;
   const stale = result !== null && result.inputs !== inputs;
-  const ready = budget !== null && budget > 0 && sources.data !== undefined && sources.data !== null;
+  const ready = budget !== null && budget > 0 && parsedMaxFlips !== null && sources.data !== undefined && sources.data !== null;
   const calculate = () => {
     if (!ready || calculating) return;
     setCalculating(true);
@@ -121,6 +155,7 @@ export function CalcScreen({ onOpen }: { onOpen: (t: FlipType, id: string) => vo
         setResult({
           plan: solve(candidates, {
             budget: budget!, horizonSeconds: hours * H, onlineSeconds: online * H, methods, freeSlots: free.length, risk, maxShare,
+            maxFlips: maxFlips > 0 ? maxFlips : undefined,
           }),
           inputs,
         });
@@ -218,6 +253,27 @@ export function CalcScreen({ onOpen }: { onOpen: (t: FlipType, id: string) => vo
                 aria-label="Most of the budget one item may be worth" aria-valuetext={spreadText(maxShare, budget)}
                 onChange={(e) => setSpreadStep(Number(e.target.value))} />
               <span className="spread-value small">{spreadText(maxShare, budget)}</span>
+            </div>
+          </div>
+          <div className="ci-field">
+            <span className="ci-label" data-tip-title="Craft steps"
+              data-tip="Most crafting steps per craft flip. 1: buy every input and craft the item once. 2: an input may also be crafted from cheaper parts first. Any: up to 4 steps, the cheapest way.">
+              Craft steps
+            </span>
+            <div className="seg">
+              {([[1, "1"], [2, "2"], [0, "Any"]] as const).map(([v, label]) => (
+                <button key={v} className={craftSteps === v ? "on" : ""} onClick={() => setCraftSteps(v)}>{label}</button>
+              ))}
+            </div>
+          </div>
+          <div className={`ci-field ${parsedMaxFlips === null ? "bad" : ""}`}>
+            <span className="ci-label" data-tip-title="Most flips"
+              data-tip="How many different flips the plan may use, for example 3. Empty: no limit. Fewer flips is less to keep track of, for a little less profit.">
+              Most flips
+            </span>
+            <div className="ci-control">
+              <input value={maxFlipsText} onChange={(e) => setMaxFlipsText(e.target.value)} size={5} aria-label="Most flips"
+                placeholder="no limit" inputMode="numeric" onKeyDown={(e) => { if (e.key === "Enter") calculate(); }} />
             </div>
           </div>
           <div className="ci-profile">

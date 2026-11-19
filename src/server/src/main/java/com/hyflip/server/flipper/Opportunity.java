@@ -25,13 +25,39 @@ import java.util.List;
  * @param fillSeconds         with buy orders and sell offers: about how long one run's orders take to fill
  *                            at current volume if they stay the best (inputs, then the sale); null if
  *                            nothing waits on an order or the volume is unknown
+ * @param volume              how much of this flip the market takes a day, and how many sellers compete
  */
 public record Opportunity(String id, FlipType type, String name, String outputId, double outputCount,
                           double cost, double value, double fees, double netProfit, Double roi,
                           long baseDurationSeconds, long durationSeconds, Double profitPerHour, long sessions,
                           double profitPerSession, Venue sellVenue, List<Venue> buyVenues, Liquidity liquidity, Unlocks.State unlock,
                           boolean complete, List<Alert> alerts, Double runsPerDay, Double profitPerDay,
-                          Long fillSeconds) {
+                          Long fillSeconds, Volume volume) {
+
+    /**
+     * Market depth of one flip.
+     *
+     * @param outputRunsPerDay runs' worth of the output that sell a day (on the side the sale waits on); null if
+     *                         unknown or unlimited (NPC)
+     * @param inputRunsPerDay  runs' worth of the scarcest bought input that can be bought a day; null if nothing
+     *                         is bought on a market
+     * @param sellers          competing sell offers (Bazaar, orders) or clean BIN listings (Auction House); null
+     *                         when the sale does not queue (insta-sell, NPC) or it is unknown
+     */
+    public record Volume(Double outputRunsPerDay, Double inputRunsPerDay, Integer sellers) {
+        public static final Volume UNKNOWN = new Volume(null, null, null);
+    }
+
+    public Opportunity(String id, FlipType type, String name, String outputId, double outputCount, double cost,
+                       double value, double fees, double netProfit, Double roi, long baseDurationSeconds,
+                       long durationSeconds, Double profitPerHour, long sessions, double profitPerSession,
+                       Venue sellVenue, List<Venue> buyVenues, Liquidity liquidity, Unlocks.State unlock,
+                       boolean complete, List<Alert> alerts, Double runsPerDay, Double profitPerDay,
+                       Long fillSeconds) {
+        this(id, type, name, outputId, outputCount, cost, value, fees, netProfit, roi, baseDurationSeconds,
+                durationSeconds, profitPerHour, sessions, profitPerSession, sellVenue, buyVenues, liquidity, unlock,
+                complete, alerts, runsPerDay, profitPerDay, fillSeconds, Volume.UNKNOWN);
+    }
 
     /** Without a fill estimate (NPC and Bazaar flips size their daily batch to the volume instead). */
     public Opportunity(String id, FlipType type, String name, String outputId, double outputCount, double cost,

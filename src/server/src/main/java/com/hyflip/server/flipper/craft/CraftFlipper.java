@@ -22,10 +22,12 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.IntFunction;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -63,9 +65,10 @@ public class CraftFlipper implements Flipper {
     public FlipList list(FlipQuery query) {
         PlayerContext player = query.apply(contexts.current());
         FlipContext ctx = context(query, player);
+        IntFunction<FlipContext> shallower = shallower(query, player);
         List<Opportunity> all = new ArrayList<>();
         for (List<NeuRecipe> recipes : byOutput(ctx).values()) {
-            all.add(bestEvaluation(recipes, ctx).summary());
+            all.add(fitting(recipes, ctx, query, shallower).summary());
         }
         Double budget = query.budget() != null ? query.budget() : player.budget();
         return FlipSupport.page(all, query, budget, ctx.now(), new FlipList.Settings(player.priceSource(),
@@ -74,17 +77,71 @@ public class CraftFlipper implements Flipper {
 
     @Override
     public Optional<OpportunityDetail> detail(String id, FlipQuery query) {
-        FlipContext ctx = context(query, query.apply(contexts.current()));
+        PlayerContext player = query.apply(contexts.current());
+        FlipContext ctx = context(query, player);
         List<NeuRecipe> recipes = ctx.book().recipes(NeuRecipe.Type.CRAFTING, id).stream()
                 .filter(r -> !r.inputs().isEmpty()).toList();
-        return recipes.isEmpty() ? Optional.empty() : Optional.of(best(recipes, ctx));
+        if (recipes.isEmpty()) {
+            return Optional.empty();
+        }
+        Evaluation chosen = fitting(recipes, ctx, query, shallower(query, player));
+        return Optional.of(detail(chosen, ctx, recipes.size() > 1 ? alternatives(recipes, chosen, ctx) : List.of()));
     }
 
     private FlipContext context(FlipQuery query, PlayerContext player) {
+        return context(query, player, query.craftDepth());
+    }
+
+    private FlipContext context(FlipQuery query, PlayerContext player, int depth) {
         Duration next = query.nextSessionIn() != null ? query.nextSessionIn() : player.nextSessionIn();
         return new FlipContext(books.current(), markets.view(query.at()), player, contexts.collections(), next,
-                query.time(clock.millis()),
-                CraftPlanner.DEFAULT_DEPTH).withHistory(markets::at).withRules(contexts.rules());
+                query.time(clock.millis()), depth).withHistory(markets::at).withRules(contexts.rules());
+    }
+
+    /** Contexts with fewer crafting levels, made when first needed. */
+    private IntFunction<FlipContext> shallower(FlipQuery query, PlayerContext player) {
+        Map<Integer, FlipContext> made = new HashMap<>();
+        return depth -> made.computeIfAbsent(depth, d -> context(query, player, d));
+    }
+
+    /**
+     * Complete sheets first, then profit per item made: recipes of one output can make different counts a craft
+     * (2 or 40), and the item is what is sold, so a big batch does not win on size alone.
+     */
+    private static final Comparator<Evaluation> BETTER = Comparator
+            .comparing((Evaluation e) -> e.summary().complete())
+            .thenComparingDouble(CraftFlipper::perItem);
+
+    static double perItem(Evaluation e) {
+        return e.summary().netProfit() / Math.max(1, e.recipe().outputCount());
+    }
+
+    /**
+     * The best recipe, or with bulk crafts hidden and the best needing one, the best recipe and depth whose
+     * purchases fit an inventory (still the bulk one when none does, so the list hides it).
+     */
+    static Evaluation fitting(List<NeuRecipe> recipes, FlipContext ctx, FlipQuery query,
+                              IntFunction<FlipContext> shallower) {
+        Evaluation best = bestEvaluation(recipes, ctx);
+        if (!query.fitsInventory() || !FlipSupport.bulk(best.summary())) {
+            return best;
+        }
+        List<Evaluation> fits = new ArrayList<>();
+        for (int depth = query.craftDepth(); depth >= 0; depth--) {
+            FlipContext at = depth == query.craftDepth() ? ctx : shallower.apply(depth);
+            for (NeuRecipe r : recipes) {
+                Evaluation e = evaluation(r, at);
+                if (!FlipSupport.bulk(e.summary())) {
+                    fits.add(e);
+                }
+            }
+        }
+        return fits.stream().max(BETTER).orElse(best);
+    }
+
+    /** The other recipes of the same output, for the guide. */
+    private static List<Evaluation> alternatives(List<NeuRecipe> recipes, Evaluation chosen, FlipContext ctx) {
+        return recipes.stream().filter(r -> r != chosen.recipe()).map(r -> evaluation(r, ctx)).toList();
     }
 
     static Map<String, List<NeuRecipe>> byOutput(FlipContext ctx) {
@@ -99,7 +156,8 @@ public class CraftFlipper implements Flipper {
 
     /** The most profitable recipe for one output; complete sheets win over incomplete ones. */
     static OpportunityDetail best(List<NeuRecipe> recipes, FlipContext ctx) {
-        return detail(bestEvaluation(recipes, ctx), ctx);
+        Evaluation chosen = bestEvaluation(recipes, ctx);
+        return detail(chosen, ctx, recipes.size() > 1 ? alternatives(recipes, chosen, ctx) : List.of());
     }
 
     /** A recipe priced without its guide: lists show thousands and need only the summary. */
@@ -108,11 +166,7 @@ public class CraftFlipper implements Flipper {
     }
 
     static Evaluation bestEvaluation(List<NeuRecipe> recipes, FlipContext ctx) {
-        return recipes.stream()
-                .map(r -> evaluation(r, ctx))
-                .max(Comparator.comparing((Evaluation e) -> e.summary().complete())
-                        .thenComparingDouble(e -> e.summary().netProfit()))
-                .orElseThrow();
+        return recipes.stream().map(r -> evaluation(r, ctx)).max(BETTER).orElseThrow();
     }
 
     static Evaluation evaluation(NeuRecipe r, FlipContext ctx) {
@@ -122,25 +176,44 @@ public class CraftFlipper implements Flipper {
         return new Evaluation(r, sheet, m, names, FlipSupport.opportunity(FlipType.CRAFT, r, sheet, m, 0, ctx, names));
     }
 
-    static OpportunityDetail detail(Evaluation e, FlipContext ctx) {
+    static OpportunityDetail detail(Evaluation e, FlipContext ctx, List<Evaluation> others) {
         return new OpportunityDetail(e.summary(), e.sheet(), ctx.unlock(e.recipe().output()),
-                guide(e.recipe(), e.sheet(), e.metrics(), e.summary(), ctx, e.names()), Map.copyOf(e.names()));
+                guide(e.recipe(), e.sheet(), e.metrics(), e.summary(), ctx, e.names(), others), Map.copyOf(e.names()));
     }
 
     static OpportunityDetail evaluate(NeuRecipe r, FlipContext ctx) {
-        return detail(evaluation(r, ctx), ctx);
+        return detail(evaluation(r, ctx), ctx, List.of());
     }
 
     static Guide guide(NeuRecipe r, CostSheet sheet, Metrics m, Opportunity o, FlipContext ctx,
-                       Map<String, String> names) {
+                       Map<String, String> names, List<Evaluation> others) {
         List<String> steps = new ArrayList<>(FlipSupport.acquireSteps(sheet, names, ctx.player().priceSource()));
         FlipSupport.fillStep(sheet, ctx).ifPresent(steps::add);
         String output = names.get(r.output());
-        String made = r.outputCount() == 1 ? output : Coins.amount(r.outputCount()) + " × " + output;
-        steps.add("Craft " + made + (r.coins() > 0 ? " (recipe costs " + Coins.format(r.coins()) + " coins)" : ""));
+        String made = r.outputCount() == 1
+                ? "Craft " + output
+                : "Craft " + output + " once: one craft makes " + Coins.amount(r.outputCount());
+        steps.add(made + (r.coins() > 0 ? " (recipe costs " + Coins.format(r.coins()) + " coins)" : ""));
         steps.add(FlipSupport.sellStep(sheet.output(), output, ctx.player().priceSource()));
 
         StringBuilder logic = FlipSupport.profitSentence(sheet, m);
+        double perItem = o.netProfit() / Math.max(1, r.outputCount());
+        if (others.isEmpty()) {
+            if (r.outputCount() > 1) {
+                logic.append(" One craft makes ").append(Coins.amount(r.outputCount())).append(", so that is ")
+                        .append(Coins.format(perItem)).append(" per item.");
+            }
+        } else {
+            logic.append(" ").append(output).append(" has ").append(others.size() + 1)
+                    .append(" recipes, compared per item made. This one makes ").append(Coins.amount(r.outputCount()))
+                    .append(" a craft: ").append(Coins.format(perItem)).append(" per item.");
+            for (Evaluation other : others) {
+                double count = Math.max(1, other.recipe().outputCount());
+                logic.append(" Another makes ").append(Coins.amount(count)).append(" a craft: ")
+                        .append(Coins.format(other.summary().netProfit() / count)).append(" per item")
+                        .append(FlipSupport.bulk(other.summary()) ? ", but needs bulk crafting." : ".");
+            }
+        }
         logic.append(" Crafting is instant, so the limit is how much the market takes");
         if (o.liquidity().dailyVolume() != null) {
             logic.append(": about ").append(Math.round(o.liquidity().dailyVolume())).append(" traded per day");

@@ -179,6 +179,30 @@ test("no budget gives an empty plan", () => {
   assert.equal(p.excluded[0]?.reason, "One unit costs more than the budget");
 });
 
+test("a bulk craft is left out at every risk level, with the reason", () => {
+  for (const risk of ["safe", "balanced", "bold"] as const) {
+    const p = solve([cand({ id: "BIG", alerts: ["BULK_CRAFT"] }), cand({ id: "OK" })], input({ risk }));
+    assert.deepEqual(p.allocations.map((a) => a.candidate.id), ["OK"]);
+    assert.equal(p.excluded[0]?.reason, "Bulk craft: the parts do not fit in one inventory");
+  }
+});
+
+test("a flip limit keeps the plan to that many flips and says why the rest fell out", () => {
+  const r = rng(7);
+  // 30 small markets: each sells little, so the unlimited plan spreads over many flips
+  const cs = Array.from({ length: 30 }, (_, i) =>
+    cand({ id: `F${i}`, unitCost: 5_000 + r() * 20_000, unitProfit: 300 + r() * 2_000, maxUnits: 5 + Math.floor(r() * 10) }));
+  const full = solve(cs, input());
+  assert.ok(full.allocations.length > 5, `unlimited plan uses ${full.allocations.length} flips`);
+  const five = solve(cs, input({ maxFlips: 5 }));
+  assert.ok(five.allocations.length <= 5 && five.allocations.length > 0);
+  assert.ok(five.expectedProfit <= full.expectedProfit + 1e-6);
+  const over = five.excluded.filter((x) => x.reason === "Over the limit of 5 flips");
+  assert.equal(over.length, full.allocations.length - five.allocations.length);
+  // a limit above the plan's size changes nothing
+  assert.deepEqual(solve(cs, input({ maxFlips: 100 })).allocations.map((a) => a.candidate.id), full.allocations.map((a) => a.candidate.id));
+});
+
 test("an empty market gives an empty plan", () => {
   const p = solve([], input());
   assert.equal(p.allocations.length, 0);

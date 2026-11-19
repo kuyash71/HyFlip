@@ -18,6 +18,8 @@ export interface Node {
   /** Forge recipes: duration for the player. */
   forgeSeconds?: number;
   outputCount?: number;
+  /** Crafted nodes: how many times the recipe runs (the item itself runs once). */
+  runs?: number;
   /** Coins paid on top of the items (NPC shops, some forge recipes). */
   coins?: number;
   children?: Node[];
@@ -36,6 +38,7 @@ function fromPlan(p: Plan, recipes: Record<string, RecipeView>): Node {
       buyTotal: p.quote?.gross,
       grid: r?.grid ?? undefined,
       outputCount: r?.outputCount,
+      runs: p.crafts,
       coins: p.coins > 0 ? p.coins : undefined,
       children: p.inputs.map((i) => fromPlan(i, recipes)),
     };
@@ -73,9 +76,26 @@ export function treeOf(type: FlipType, d: OpportunityDetail): Node {
     grid: r?.grid ?? undefined,
     forgeSeconds: type === "forge" ? s.durationSeconds : undefined,
     outputCount: r?.outputCount ?? s.outputCount,
+    runs: 1,
     coins: d.sheet.coins > 0 ? d.sheet.coins : undefined,
     children,
   };
+}
+
+/**
+ * The work in one run of a flip: recipe runs (crafts and forge jobs) and items bought. One crafting step can
+ * mean thousands of crafts when its parts are crafted from cheaper ones.
+ */
+export function workOf(root: Node): { crafts: number; bought: number } {
+  let crafts = 0;
+  let bought = 0;
+  const walk = (n: Node) => {
+    if (n.method === "CRAFT" || n.method === "FORGE") crafts += Math.ceil((n.runs ?? 1) - 1e-9);
+    if (n.method === "BUY") bought += n.qty;
+    n.children?.forEach(walk);
+  };
+  walk(root);
+  return { crafts, bought: Math.round(bought) };
 }
 
 /** Crafted or forged nodes in the order a player does them: deepest first, the item itself last. */

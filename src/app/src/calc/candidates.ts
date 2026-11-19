@@ -54,6 +54,9 @@ export function toCandidate(type: FlipType, o: Opportunity, x: FlipExtras | unde
         : undefined,
   };
   const sell = sellRate(o, ctx);
+  // Inputs bought on a market come in only as fast as others trade them: our share of the scarcest input.
+  const inputs = o.volume?.inputRunsPerDay;
+  const buy = inputs === null || inputs === undefined ? Infinity : (inputs * ctx.bazaarShare) / DAY;
   // A unit's coins are back only once it sells: at most as often as the market takes one.
   const sellGap = sell > 0 && Number.isFinite(sell) ? 1 / sell : sell === 0 ? DAY : 0;
   switch (type) {
@@ -61,7 +64,7 @@ export function toCandidate(type: FlipType, o: Opportunity, x: FlipExtras | unde
       return {
         ...base,
         leadSeconds: o.durationSeconds + (o.fillSeconds ?? 0),
-        buyRate: Infinity,
+        buyRate: buy,
         sellRate: sell,
         // Slow sellers: one copy at a time, as the liquidity bars advise.
         maxUnits: o.liquidity.level === "LOW" || o.liquidity.level === "UNKNOWN" ? 1 : 2,
@@ -71,7 +74,7 @@ export function toCandidate(type: FlipType, o: Opportunity, x: FlipExtras | unde
       return {
         ...base,
         leadSeconds: CRAFT_SECONDS,
-        buyRate: Infinity,
+        buyRate: buy,
         sellRate: sell,
         maxUnits: o.liquidity.level === "LOW" ? 1 : Number.MAX_SAFE_INTEGER,
         cycleSeconds: Math.max(CRAFT_SECONDS + (o.fillSeconds ?? 0), sellGap),

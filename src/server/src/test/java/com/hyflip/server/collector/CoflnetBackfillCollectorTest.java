@@ -85,9 +85,42 @@ class CoflnetBackfillCollectorTest extends DatabaseTest {
     }
 
     @Test
+    void aTagCoflnetRejectsWaitsADayInsteadOfBlockingTheQueue() throws Exception {
+        failure = new CoflnetException(400, "/api/auctions/tag/HYPERION/sold returned 400 BAD_REQUEST");
+        assertThat(collector(NOW).collect()).isZero();
+        assertThat(auctions.backfills()).hasSize(1);
+        requested.clear();
+        assertThat(collector(NOW.plus(Duration.ofHours(1))).collect()).isZero();
+        assertThat(requested).as("not asked again within the day").isEmpty();
+    }
+
+    @Test
+    void networkErrorsAreRetriedNextRun() throws Exception {
+        failure = new CoflnetException(0, "connection refused");
+        collector(NOW).collect();
+        assertThat(auctions.backfills()).isEmpty();
+    }
+
+    @Test
     void aRateLimitOnTheFirstRequestFailsTheRun() {
         failure = new CoflnetException(429, "slow down");
         assertThatThrownBy(() -> collector(NOW).collect()).isInstanceOf(CoflnetException.class);
-        assertThat(auctions.backfilledAt()).isEmpty();
+        assertThat(auctions.backfills()).isEmpty();
+    }
+
+    @Test
+    void busyItemsWithAFullPageAreFetchedAgainBeforeThePageRunsOut() {
+        java.time.Duration day = java.time.Duration.ofHours(24);
+        long now = 100 * 3_600_000L;
+        // a page of fewer sales covers the whole week: the normal wait
+        assertThat(CoflnetBackfillCollector.refetchAfter(new com.hyflip.server.storage.AuctionRepository.Backfill(now, 400, now - 3_600_000L), day))
+                .isEqualTo(day);
+        // a full page covering 10 h: fetch again after 8 h, so the pages overlap
+        assertThat(CoflnetBackfillCollector.refetchAfter(new com.hyflip.server.storage.AuctionRepository.Backfill(now, 1000, now - 10 * 3_600_000L), day))
+                .isEqualTo(java.time.Duration.ofHours(8));
+        // a full page covering 20 min: not more often than every 30 min
+        assertThat(CoflnetBackfillCollector.refetchAfter(new com.hyflip.server.storage.AuctionRepository.Backfill(now, 1000, now - 1_200_000L), day))
+                .isEqualTo(java.time.Duration.ofMinutes(30));
+        assertThat(CoflnetBackfillCollector.refetchAfter(null, day)).isEqualTo(day);
     }
 }

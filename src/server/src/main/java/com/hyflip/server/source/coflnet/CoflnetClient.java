@@ -23,6 +23,15 @@ public class CoflnetClient implements CoflnetApi {
         this.http = externalRestClient.mutate().baseUrl(properties.coflnet().baseUrl()).build();
     }
 
+    /**
+     * Coflnet answers an item it does not know with {@code 400 {"slug":"item_not_found",...}} (and some paths
+     * with 404): that item simply has no sales there, which is not an error.
+     */
+    static boolean unknownItem(RestClientResponseException e) {
+        int status = e.getStatusCode().value();
+        return status == 404 || status == 400 && e.getResponseBodyAsString().contains("item_not_found");
+    }
+
     @Override
     public List<SoldAuction> sold(String tag) {
         if (!TAG.matcher(tag).matches()) {
@@ -33,7 +42,7 @@ public class CoflnetClient implements CoflnetApi {
             List<SoldAuction> body = http.get().uri(path).retrieve().body(SOLD);
             return body == null ? List.of() : body;
         } catch (RestClientResponseException e) {
-            if (e.getStatusCode().value() == 404) {
+            if (unknownItem(e)) {
                 return List.of();
             }
             throw new CoflnetException(e.getStatusCode().value(), path + " returned " + e.getStatusCode());

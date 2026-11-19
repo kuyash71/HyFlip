@@ -1,6 +1,7 @@
 package com.hyflip.server.api;
 
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -90,6 +91,37 @@ class CraftApiTest extends DatabaseTest {
                 .andExpect(jsonPath("$.guide.steps[0]").value(org.hamcrest.Matchers.startsWith("Buy 25,600 × MITHRIL_ORE")))
                 .andExpect(jsonPath("$.guide.steps[1]").value(org.hamcrest.Matchers.startsWith("Craft 160 × Enchanted Mithril")));
         mvc.perform(get("/api/v1/flips/craft/NOT_CRAFTABLE")).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void volumeDepthAndSaleFilters() throws Exception {
+        mvc.perform(get("/api/v1/flips/forge").param("includeLocked", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[?(@.id == 'REFINED_MITHRIL')].volume.outputRunsPerDay").value(hasItem(greaterThan(0.0))))
+                .andExpect(jsonPath("$.items[?(@.id == 'REFINED_MITHRIL')].volume.inputRunsPerDay").value(hasItem(greaterThan(0.0))));
+        // Instant prices for this request only
+        mvc.perform(get("/api/v1/flips/forge").param("priceSource", "instant"))
+                .andExpect(jsonPath("$.settings.priceSource").value("INSTANT"));
+        // Only flips that sell on the Auction House: the fixture's forge outputs all sell on the Bazaar
+        mvc.perform(get("/api/v1/flips/forge").param("includeLocked", "true").param("sellVenue", "AUCTION"))
+                .andExpect(jsonPath("$.total").value(0));
+        mvc.perform(get("/api/v1/flips/forge").param("sellVenue", "BAZAAR")).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/flips/forge").param("priceSource", "cheap")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/flips/forge").param("sellVenue", "moon")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void craftStepsLimitHowDeepInputsAreCrafted() throws Exception {
+        // One step: the final forge job only, Enchanted Mithril is bought
+        mvc.perform(get("/api/v1/flips/forge/REFINED_MITHRIL").param("craftSteps", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sheet.inputs[0].plan.method").value("BUY"))
+                .andExpect(jsonPath("$.sheet.cost").value(closeTo(160 * 1260, 0.01)));
+        // Two steps: Enchanted Mithril may be crafted from ore again
+        mvc.perform(get("/api/v1/flips/forge/REFINED_MITHRIL").param("craftSteps", "2"))
+                .andExpect(jsonPath("$.sheet.inputs[0].plan.method").value("CRAFT"));
+        mvc.perform(get("/api/v1/flips/craft").param("craftSteps", "9")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/flips/craft").param("craftSteps", "0")).andExpect(status().isBadRequest());
     }
 
     @Test

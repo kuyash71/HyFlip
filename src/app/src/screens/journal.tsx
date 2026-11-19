@@ -16,8 +16,8 @@ const TYPES: { id: FlipType; label: string }[] = [
 export function JournalScreen({ onSummary }: { onSummary?: (s: TradeSummary) => void }) {
   const api = useApi();
   const toast = useToast();
-  const trades = usePolling(() => api.trades(undefined, 200), 0, [api]);
-  const summary = usePolling(() => api.tradeSummary(), 0, [api]);
+  const trades = usePolling(() => api.trades(undefined, 200), 0, [api], "journal:trades");
+  const summary = usePolling(() => api.tradeSummary(), 0, [api], "journal:summary");
   const [filter, setFilter] = useState<"all" | "open" | "done">("all");
   const reload = () => {
     trades.reload();

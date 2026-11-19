@@ -2,6 +2,7 @@ package com.hyflip.server.market;
 
 import com.hyflip.server.engine.Market;
 import com.hyflip.server.engine.Market.BazaarAverage;
+import com.hyflip.server.source.coflnet.CoflnetApi;
 import com.hyflip.server.storage.PriceRepository;
 import java.time.Clock;
 import java.time.Duration;
@@ -224,6 +225,7 @@ public class MarketService {
         private volatile Map<String, PriceRepository.LowestBin> storedBins;
         private volatile Map<String, Double> npcPrices;
         private volatile Double coverageDays;
+        private volatile Map<String, Long> cutOff;
         private volatile Long lastScan;
 
         View(long at, boolean live) {
@@ -241,6 +243,25 @@ public class MarketService {
                 coverageDays = days;
             }
             return days;
+        }
+
+        /**
+         * Days the item's sales cover. Normally {@link #coverageDays()}; when Coflnet returned a full page for the
+         * item, only the time since the oldest sale of that page, since earlier sales were not returned.
+         */
+        private double coverageDays(String itemId) {
+            Map<String, Long> all = cutOff;
+            if (all == null) {
+                all = prices.cutOffSince(at - SALES_WINDOW.toMillis(), at, CoflnetApi.PAGE_SIZE);
+                cutOff = all;
+            }
+            Long since = all.get(itemId);
+            double days = coverageDays();
+            if (since == null) {
+                return days;
+            }
+            long span = Math.max(MIN_COVERAGE.toMillis(), at - since);
+            return Math.min(days, span / (double) Duration.ofDays(1).toMillis());
         }
 
         private long lastScan() {
@@ -348,7 +369,7 @@ public class MarketService {
                     bin.map(PriceRepository.LowestBin::price).orElse(null),
                     bin.map(PriceRepository.LowestBin::takenAt).orElse(null),
                     median(sales.stream().mapToDouble(PriceRepository.Sale::unitPrice).sorted().toArray()),
-                    units / coverageDays(), sales.size(), bin.map(PriceRepository.LowestBin::listings).orElse(0)));
+                    units / coverageDays(itemId), sales.size(), bin.map(PriceRepository.LowestBin::listings).orElse(0)));
         }
     }
 

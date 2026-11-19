@@ -15,6 +15,7 @@ Alerts flag risks on an opportunity before the user spends coins. They appear in
 | `RECENT_CHANGE` | A Bazaar purchase or Bazaar-sold output moved more than 25% (and at least 1 coin) from its price 10 minutes ago (a dump or spike) |
 | `THIN_BOOK` | Bazaar Flipper: a side has fewer than `bazaar.thin-book` orders, or the best order stands more than 25% from the next price level |
 | `LOW_VOLUME` | Liquidity LOW: daily volume below 3 × the run's output, or a Bazaar ingredient purchase below 3 × its daily volume |
+| `BULK_CRAFT` | Buying the inputs of one run takes more items than one inventory holds (36 × 64 = 2,304), counted over every purchase in the plan, crafted parts included. The message gives the items, full inventories and crafts. Forge and Craft Flipper hide these rows unless *Bulk crafts too* is on; Flip Calc leaves them out |
 | `UNLOCK_UNKNOWN` | A requirement cannot be checked (HOTM level or collection tier not set, slayer requirements) |
 | `FORGE_FINISHED` | A tracked forge slot is done (Forge Tracker) |
 

@@ -3,10 +3,10 @@ import type { CollectorStatus, Opportunity, OpportunityDetail, TradeStats, Trade
 import { realisation, solve } from "../calc/advisor";
 import { sellRate, toCandidate } from "../calc/candidates";
 import { MIN_RESULTS, trackRecord } from "../calc/trackRecord";
-import { coins, duration, iconPixels, iconStyle, liquidityTier, pct, prettyId } from "../ui/common";
+import { ALERT_LABEL, coins, duration, iconPixels, iconStyle, liquidityTier, pct, prettyId, TAG_LOOK } from "../ui/common";
 import { fromText, parseCollections } from "./settings";
 import { health, uptimeCells } from "./status";
-import { craftedNodes, treeOf } from "./tree";
+import { craftedNodes, treeOf, workOf, type Node } from "./tree";
 
 function opp(over: Partial<Opportunity> = {}): Opportunity {
   return {
@@ -14,7 +14,8 @@ function opp(over: Partial<Opportunity> = {}): Opportunity {
     cost: 200_000, value: 760_000, fees: 9_500, netProfit: 550_500, roi: 2.75, baseDurationSeconds: 21_600,
     durationSeconds: 17_280, profitPerHour: 114_687, sessions: 1, profitPerSession: 550_500, sellVenue: "BAZAAR",
     buyVenues: ["BAZAAR"], liquidity: { level: "HIGH", dailyVolume: 20_000 }, unlock: "MET", complete: true, alerts: [],
-    runsPerDay: null, profitPerDay: null, fillSeconds: null, ...over,
+    runsPerDay: null, profitPerDay: null, fillSeconds: null,
+    volume: { outputRunsPerDay: null, inputRunsPerDay: null, sellers: null }, ...over,
   };
 }
 
@@ -162,6 +163,7 @@ describe("collector health", () => {
     expect(health(c({ lastSuccessAt: now - 400_000 }), now)).toBe("SLOW");
     expect(health(c({ lastRun: { ...c({}).lastRun!, status: "FAILED" }, consecutiveFailures: 2 }), now)).toBe("FAILED");
     expect(health(c({ lastRun: null }), now)).toBe("IDLE");
+    expect(health(c({ lastSuccessAt: now - 4_000_000, lastRun: { ...c({}).lastRun!, status: "RUNNING" } }), now)).toBe("OK");
   });
 
   it("buckets runs into half hours, a success beating a failure", () => {
@@ -265,5 +267,44 @@ describe("desktop content security policy", () => {
     const conf = JSON.parse(readFileSync(new URL("../../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
     const img = (conf.app.security.csp as string).split(";").map((s) => s.trim()).find((s) => s.startsWith("img-src"));
     expect(img?.split(/\s+/)).toContain("blob:");
+  });
+});
+
+describe("bulk crafts", () => {
+  it("counts every craft and bought item, not just the crafting steps", () => {
+    // 7 blocks, each from 160 enchanted items, each from 160 base items: 2 crafting steps
+    const base: Node = { item: "BASE", qty: 179200, method: "BUY", unit: 1, total: 179200 };
+    const enchanted: Node = { item: "ENCHANTED", qty: 1120, method: "CRAFT", runs: 1120, unit: 160, total: 179200, children: [base] };
+    const block: Node = { item: "BLOCK", qty: 7, method: "CRAFT", runs: 7, unit: 25600, total: 179200, children: [enchanted] };
+    const root: Node = { item: "OUT", qty: 1, method: "CRAFT", runs: 1, unit: 179200, total: 179200, children: [block] };
+    expect(craftedNodes(root)).toHaveLength(3);
+    expect(workOf(root)).toEqual({ crafts: 1128, bought: 179200 });
+  });
+
+  it("every tag has a label and its own colour", () => {
+    expect(ALERT_LABEL.BULK_CRAFT).toBe("Bulk craft");
+    const colours = Object.values(TAG_LOOK).map((l) => l.colour);
+    expect(new Set(colours).size).toBe(colours.length);
+    for (const type of Object.keys(ALERT_LABEL)) expect(TAG_LOOK[type]).toBeDefined();
+  });
+});
+
+describe("most flips field", () => {
+  it("reads empty as no limit, whole numbers as a limit and the rest as invalid", async () => {
+    const { parseMaxFlips } = await import("./calc");
+    expect(parseMaxFlips("")).toBe(0);
+    expect(parseMaxFlips(" 3 ")).toBe(3);
+    expect(parseMaxFlips("0")).toBeNull();
+    expect(parseMaxFlips("2.5")).toBeNull();
+    expect(parseMaxFlips("abc")).toBeNull();
+  });
+});
+
+describe("input volume in Flip Calc", () => {
+  it("limits how fast a craft's inputs can be bought to our share of the scarcest input", () => {
+    const ctx = { bazaarShare: 0.05, kept: () => 1 };
+    const scarce = opp({ volume: { outputRunsPerDay: 500, inputRunsPerDay: 20, sellers: 3 } });
+    expect(toCandidate("craft", scarce, undefined, ctx as never).buyRate).toBeCloseTo((20 * 0.05) / 86_400);
+    expect(toCandidate("craft", opp(), undefined, ctx as never).buyRate).toBe(Infinity);
   });
 });

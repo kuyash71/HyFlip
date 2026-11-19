@@ -74,7 +74,7 @@ flowchart TD
   3. A tracked job left in a slot the profile shows busy was collected and refilled in game. A job missing from the profile is marked collected once it has finished (the profile can lag).
   4. Jobs the tracker does not know are recorded, with prices of the moment.
 - A slot holds at most one uncollected job (enforced by a unique index).
-- The slot count comes from `player.forge-slots` (2 if unset; the UI says so).
+- The slot count comes from `player.forge-slots`. If unset, it is the highest slot seen in use: busy in the linked profile now, or in any job in the forge history (2 at least, 7 at most). The profile API does not report unlocked slots, and slots never get locked again, so collecting the jobs in the last slots does not shrink the forge. The UI says when the count is not set by hand.
 - **Expected vs realised.** At start the job stores the input cost and the net output value at current prices. Once the expected end has passed, the realised value is computed from the last prices at or before the end (settled when the tracker is read). The difference shows how far prices moved during the job.
 - **End times** are shown as a clock time in the zone from `display.time-zone` (Settings → Time), with the day when it is not today: "18:40", "01:10 tomorrow".
 - **Plan for free slots.** Above the slots the tracker suggests what to start in the empty or finished slots: the mix of recipes with the highest total profit per session within the budget (see [API](api.md#forge-planner)). A slow-selling output fills at most one slot (two at medium liquidity). *Started* records the job.
